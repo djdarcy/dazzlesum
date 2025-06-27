@@ -1243,7 +1243,10 @@ class DazzleHashCalculator:
         else:
             # Stream processing for large files
             file_obj.seek(0)
-            while chunk := file_obj.read(self.chunk_size):
+            while True:
+                chunk = file_obj.read(self.chunk_size)
+                if not chunk:
+                    break
                 hasher.update(chunk)
 
         return hasher.hexdigest()
