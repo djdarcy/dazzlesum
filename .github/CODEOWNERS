@@ -7,6 +7,16 @@
 *.js    @djdarcy
 *.py    @djdarcy
 
+
+#Unit tests
+/tests/ @djdarcy
+
+#Example configurations
+/examples/ @djdarcy
+
+#Helper scripts
+/scripts/ @djdarcy
+
 # Documentation
 /docs/   @djdarcy
 *.md     @djdarcy

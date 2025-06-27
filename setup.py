@@ -1,23 +1,75 @@
-from setuptools import setup, find_packages
+#!/usr/bin/env python3
+from setuptools import setup
+import os
+
+# Read version from dazzlesum.py
+def get_version():
+    with open('dazzlesum.py', 'r') as f:
+        for line in f:
+            if line.startswith('__version__'):
+                return line.split('=')[1].strip().strip('"\'')
+    return '1.1.0'
+
+# Read long description from README
+def get_long_description():
+    if os.path.exists('README.md'):
+        with open('README.md', 'r', encoding='utf-8') as f:
+            return f.read()
+    return 'A cross-platform file checksum utility with DOS compatibility and advanced verification features.'
 
 setup(
     name="dazzlesum",
-    version="0.1.1",
-    description="A new project repository",
-    author="Dustin",
+    version=get_version(),
+    description="A cross-platform file checksum utility with DOS compatibility and advanced verification features",
+    long_description=get_long_description(),
+    long_description_content_type="text/markdown",
+    author="Dustin Darcy",
     author_email="6962246+djdarcy@users.noreply.github.com",
-    packages=find_packages(),
+    url="https://github.com/djdarcy/dazzlesum",
+    py_modules=["dazzlesum"],
+    entry_points={
+        "console_scripts": [
+            "dazzlesum=dazzlesum:main",
+        ],
+    },
     install_requires=[
-        # Add your dependencies here
+        # Core dependencies - none required, pure Python stdlib
     ],
+    extras_require={
+        'windows': [
+            # Enhanced Windows UNC path support
+            # 'git+https://github.com/djdarcy/UNCtools.git',
+        ],
+        'dev': [
+            'pytest>=7.0.0',
+            'black>=23.0.0',
+            'flake8>=6.0.0',
+            'mypy>=1.0.0',
+        ],
+    },
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
+        "Environment :: Console",
         "Intended Audience :: Developers",
+        "Intended Audience :: System Administrators",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+        "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Topic :: System :: Archiving",
+        "Topic :: System :: Systems Administration",
+        "Topic :: Utilities",
     ],
-    python_requires=">=3.6",
+    keywords="checksum hash verification sha256 cross-platform dos-compatible",
+    python_requires=">=3.7",
+    project_urls={
+        "Bug Reports": "https://github.com/djdarcy/dazzlesum/issues",
+        "Source": "https://github.com/djdarcy/dazzlesum",
+        "Documentation": "https://github.com/djdarcy/dazzlesum#readme",
+    },
 )

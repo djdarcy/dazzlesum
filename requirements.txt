@@ -3,7 +3,8 @@
 # No required dependencies for basic functionality
 
 # Optional dependencies for enhanced functionality
-# unctools>=1.0.0  # Enhanced Windows UNC path handling (optional)
+# Enhanced Windows UNC path handling (optional)
+git+https://github.com/djdarcy/UNCtools.git
 
 # Development dependencies (for contributors)
 pytest>=7.0.0
