@@ -1,7 +1,11 @@
 # Project dependencies
-# Add your dependencies here
+# Dazzlesum is designed to work with Python standard library only
+# No required dependencies for basic functionality
 
-# Development dependencies
+# Optional dependencies for enhanced functionality
+# unctools>=1.0.0  # Enhanced Windows UNC path handling (optional)
+
+# Development dependencies (for contributors)
 pytest>=7.0.0
 black>=23.0.0
 flake8>=6.0.0
