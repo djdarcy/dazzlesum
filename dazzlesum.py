@@ -1283,13 +1283,91 @@ def is_monolithic_file(file_path: Path) -> bool:
         return False
 
 
+class ShadowPathResolver:
+    """Resolves paths between source directories and shadow directory structure.
+    
+    The shadow directory feature allows keeping source directories clean by storing
+    all .shasum files in a parallel shadow directory structure.
+    
+    Example:
+        source_root: /data/projects/myproject/
+        shadow_root: /checksums/myproject/
+        
+        Source file: /data/projects/myproject/subdir/file.txt
+        Shadow .shasum: /checksums/myproject/subdir/.shasum
+    """
+    
+    def __init__(self, source_root: Path, shadow_root: Path):
+        self.source_root = Path(source_root).resolve()
+        self.shadow_root = Path(shadow_root).resolve()
+        
+        # Ensure shadow root directory exists
+        self.shadow_root.mkdir(parents=True, exist_ok=True)
+    
+    def get_shadow_shasum_path(self, source_dir: Path) -> Path:
+        """Get the shadow .shasum file path for a source directory.
+        
+        Args:
+            source_dir: Source directory that would contain .shasum file
+            
+        Returns:
+            Path to .shasum file in shadow directory structure
+        """
+        source_dir = Path(source_dir).resolve()
+        
+        # Calculate relative path from source root
+        try:
+            rel_path = source_dir.relative_to(self.source_root)
+        except ValueError:
+            # source_dir is not under source_root
+            raise ValueError(f"Source directory {source_dir} is not under source root {self.source_root}")
+        
+        # Create corresponding shadow directory path
+        shadow_dir = self.shadow_root / rel_path
+        return shadow_dir / SHASUM_FILENAME
+    
+    def get_source_file_path(self, shadow_relative_path: str) -> Path:
+        """Resolve a shadow-relative file path to the corresponding source file.
+        
+        Args:
+            shadow_relative_path: Relative path as stored in shadow .shasum file
+            
+        Returns:
+            Path to actual source file
+        """
+        return self.source_root / shadow_relative_path
+    
+    def ensure_shadow_directory(self, shadow_shasum_path: Path) -> None:
+        """Ensure the directory for a shadow .shasum file exists.
+        
+        Args:
+            shadow_shasum_path: Path to shadow .shasum file
+        """
+        shadow_shasum_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    def get_shadow_monolithic_path(self, algorithm: str, output_filename: str = None) -> Path:
+        """Get path for monolithic checksum file in shadow directory.
+        
+        Args:
+            algorithm: Hash algorithm for default filename
+            output_filename: Optional custom filename
+            
+        Returns:
+            Path to monolithic checksum file in shadow root
+        """
+        if output_filename:
+            return self.shadow_root / output_filename
+        return self.shadow_root / f"{MONOLITHIC_DEFAULT_NAME}.{algorithm}"
+
+
 class ChecksumGenerator:
     """Main checksum generator orchestrator."""
 
     def __init__(self, algorithm=DEFAULT_ALGORITHM, line_ending_strategy='auto',
                  include_patterns=None, exclude_patterns=None, follow_symlinks=False,
                  log_file=None, summary_mode=False, generate_individual=True,
-                 generate_monolithic=False, output_file=None, show_all_verifications=False):
+                 generate_monolithic=False, output_file=None, show_all_verifications=False,
+                 shadow_dir=None):
         self.algorithm = algorithm.lower()
         self.calculator = DazzleHashCalculator(algorithm, line_ending_strategy)
         self.include_patterns = include_patterns or []
@@ -1303,6 +1381,10 @@ class ChecksumGenerator:
         self.show_all_verifications = show_all_verifications
         self.summary_collector = SummaryCollector()
         self.progress_tracker = None
+        
+        # Shadow directory support
+        self.shadow_dir = Path(shadow_dir) if shadow_dir else None
+        self.shadow_resolver = None
 
         # Set up log file if specified
         if self.log_file:
@@ -1421,7 +1503,13 @@ class ChecksumGenerator:
 
     def write_shasum_file(self, directory: Path, checksums: Dict[str, Any]):
         """Write checksums to .shasum file in native-compatible format."""
-        shasum_path = directory / SHASUM_FILENAME
+        # Use shadow path if shadow mode is active
+        if self.shadow_resolver:
+            shasum_path = self.shadow_resolver.get_shadow_shasum_path(directory)
+            # Ensure shadow directory exists
+            self.shadow_resolver.ensure_shadow_directory(shasum_path)
+        else:
+            shasum_path = directory / SHASUM_FILENAME
 
         try:
             with open(shasum_path, 'w', encoding='utf-8') as f:
@@ -1448,10 +1536,14 @@ class ChecksumGenerator:
 
     def verify_checksums_in_directory(self, directory: Path) -> Dict[str, Any]:
         """Verify checksums in a directory against its .shasum file."""
-        shasum_path = directory / SHASUM_FILENAME
+        # Use shadow path if shadow mode is active
+        if self.shadow_resolver:
+            shasum_path = self.shadow_resolver.get_shadow_shasum_path(directory)
+        else:
+            shasum_path = directory / SHASUM_FILENAME
 
         if not shasum_path.exists():
-            return {'error': f"No {SHASUM_FILENAME} file found in {directory}"}
+            return {'error': f"No {SHASUM_FILENAME} file found in {shasum_path}"}
 
         results = {
             'verified': [],
@@ -1476,7 +1568,11 @@ class ChecksumGenerator:
 
         # Check each stored checksum
         for filename, expected_hash in stored_checksums.items():
-            file_path = directory / filename
+            # In shadow mode, resolve relative path to source file
+            if self.shadow_resolver:
+                file_path = self.shadow_resolver.get_source_file_path(filename)
+            else:
+                file_path = directory / filename
 
             if not file_path.exists():
                 results['missing'].append(filename)
@@ -1613,6 +1709,14 @@ class ChecksumGenerator:
         if not root_directory.is_dir():
             logger.error(f"Path is not a directory: {root_directory}")
             return
+
+        # Initialize shadow resolver if shadow directory is specified
+        if self.shadow_dir:
+            self.shadow_resolver = ShadowPathResolver(
+                source_root=root_directory,
+                shadow_root=self.shadow_dir
+            )
+            dazzle_logger.info(f"Using shadow directory: {self.shadow_dir}", level=1)
 
         # Check for monolithic verification mode
         if verify_only and self.generate_monolithic:
@@ -1854,6 +1958,11 @@ Examples:
     parser.add_argument('--dry-run', action='store_true',
                        help='Show what would be done without actually doing it')
 
+    # Shadow directory operations
+    parser.add_argument('--shadow-dir', metavar='DIR',
+                       help='Use shadow directory to keep source directories clean. '
+                            'All .shasum files will be stored in parallel shadow structure.')
+
     # Checksum generation mode
     parser.add_argument('--mode', choices=['individual', 'monolithic', 'both'],
                        default='individual',
@@ -2091,7 +2200,8 @@ def main():
             generate_individual=generate_individual,
             generate_monolithic=generate_monolithic,
             output_file=args.output,
-            show_all_verifications=args.show_all_verifications
+            show_all_verifications=args.show_all_verifications,
+            shadow_dir=args.shadow_dir
         )
 
         # Force Python implementation if requested
