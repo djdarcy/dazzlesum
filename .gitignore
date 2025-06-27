@@ -165,3 +165,15 @@ convos/
 # Private content (auto-added)
 /revisions/
 
+
+# RepoKit Private Content Protection (DO NOT REMOVE)
+.env.private
+CLAUDE.md
+**/private_*
+test_runs/
+private/claude/
+private/notes/
+test-runs/
+private/docs/
+private/temp/
+dazzlesum_backup_*/
