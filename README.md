@@ -1,7 +1,7 @@
 # Dazzlesum
 
 [![GitHub Workflow Status](https://github.com/djdarcy/dazzlesum/actions/workflows/python.yml/badge.svg)](https://github.com/djdarcy/dazzlesum/actions)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/djdarcy/dazzlesum/releases/tag/v1.1.0)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/djdarcy/dazzlesum/releases/tag/v1.3.0)
 [![Python Version](https://img.shields.io/badge/python-%3E%3D3.7-brightgreen)](https://python.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
@@ -72,58 +72,84 @@ pip install -e ".[dev,test,docs]"
 
 ## Quick Start
 
-### Generate checksums
+### Generate checksums (using new subcommand syntax)
 
 ```bash
 # Generate checksums for current directory
-dazzlesum
+dazzlesum create
 
 # Generate checksums recursively
-dazzlesum -r
+dazzlesum create -r
 
 # Create monolithic checksum file
-dazzlesum -r --mode monolithic
+dazzlesum create -r --mode monolithic
 
 # Generate with verbose output
-dazzlesum -r -vv
+dazzlesum create -r -vv
 
 # Keep source directories clean with shadow directory
-dazzlesum -r --shadow-dir ./checksums
+dazzlesum create -r --shadow-dir ./checksums
 
 # Generate monolithic checksum in shadow directory
-dazzlesum -r --mode monolithic --shadow-dir ./checksums
+dazzlesum create -r --mode monolithic --shadow-dir ./checksums
 ```
 
 ### Verify checksums
 
 ```bash
 # Verify existing checksums
-dazzlesum -r --verify
+dazzlesum verify -r
 
 # Verify with detailed output
-dazzlesum -r --verify -v
+dazzlesum verify -r -v
 
 # Show all verification results
-dazzlesum -r --verify --show-all-verifications
+dazzlesum verify -r --show-all-verifications
 
 # Verify checksums stored in shadow directory
-dazzlesum -r --verify --shadow-dir ./checksums
+dazzlesum verify -r --shadow-dir ./checksums
+```
+
+### Update checksums
+
+```bash
+# Update existing checksums for changed files
+dazzlesum update -r
+
+# Update only specific file types
+dazzlesum update -r --include "*.txt,*.doc"
 ```
 
 ### Manage checksum files
 
 ```bash
 # Backup all .shasum files
-dazzlesum -r --manage backup --backup-dir ./checksum-backup
+dazzlesum manage -r backup --backup-dir ./checksum-backup
 
 # List all .shasum files with details
-dazzlesum -r --manage list
+dazzlesum manage -r list
 
 # Remove all .shasum files (with confirmation)
-dazzlesum -r --manage remove
+dazzlesum manage -r remove
 
 # Restore from backup
-dazzlesum -r --manage restore --backup-dir ./checksum-backup
+dazzlesum manage -r restore --backup-dir ./checksum-backup
+```
+
+### Get help
+
+```bash
+# General help
+dazzlesum --help
+
+# Help for specific commands
+dazzlesum create --help
+dazzlesum verify --help
+
+# Detailed help topics
+dazzlesum mode        # Help for --mode parameter
+dazzlesum examples    # Comprehensive usage examples
+dazzlesum shadow      # Shadow directory help
 ```
 
 ## Documentation

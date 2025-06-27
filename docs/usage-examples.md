@@ -1,40 +1,40 @@
 # Usage Examples
 
-This document provides practical examples for common dazzlesum use cases.
+This document provides practical examples for common dazzlesum use cases (v1.3.0+).
 
 ## Basic Workflow
 
 ### 1. Generate Checksums
 ```bash
 # Start with current directory
-dazzlesum
+dazzlesum create
 
 # Process entire project recursively
-dazzlesum -r
+dazzlesum create -r
 
 # Use SHA512 for extra security
-dazzlesum -r --algorithm sha512
+dazzlesum create -r --algorithm sha512
 ```
 
 ### 2. Verify Integrity
 ```bash
 # Verify all checksums
-dazzlesum -r --verify
+dazzlesum verify -r
 
 # Verbose verification to see what's happening
-dazzlesum -r --verify -v
+dazzlesum verify -r -v
 
 # Show all files, not just problems
-dazzlesum -r --verify --show-all-verifications
+dazzlesum verify -r --show-all-verifications
 ```
 
 ### 3. Update Changed Files
 ```bash
 # Update only changed files
-dazzlesum -r --update
+dazzlesum update -r
 
 # Update with verbose output
-dazzlesum -r --update -vv
+dazzlesum update -r -vv
 ```
 
 ## Integration Examples
@@ -44,13 +44,13 @@ dazzlesum -r --update -vv
 Before creating a backup:
 ```bash
 # Generate checksums for source data
-dazzlesum -r /important/data --mode monolithic --output backup-checksums.sha256
+dazzlesum create -r /important/data --mode monolithic --output backup-checksums.sha256
 ```
 
 After restoring from backup:
 ```bash
 # Verify restored data matches original
-dazzlesum -r /restored/data --verify --output backup-checksums.sha256
+dazzlesum verify -r /restored/data --output backup-checksums.sha256
 ```
 
 ### CI/CD Pipeline
@@ -58,13 +58,13 @@ dazzlesum -r /restored/data --verify --output backup-checksums.sha256
 Generate checksums for build artifacts:
 ```bash
 # Generate checksums for release artifacts
-dazzlesum -r ./dist --mode monolithic --output release-checksums.sha256
+dazzlesum create -r ./dist --mode monolithic --output release-checksums.sha256
 ```
 
 Verify deployment:
 ```bash
 # Verify deployed files match build
-dazzlesum -r ./deployed --verify --output release-checksums.sha256
+dazzlesum verify -r ./deployed --output release-checksums.sha256
 ```
 
 ### Data Migration
@@ -72,14 +72,14 @@ dazzlesum -r ./deployed --verify --output release-checksums.sha256
 On source system:
 ```bash
 # Create backup of checksums
-dazzlesum -r /data --manage backup --backup-dir /checksums
+dazzlesum manage -r /data backup --backup-dir /checksums
 ```
 
 On target system:
 ```bash
 # Restore checksums and verify
-dazzlesum -r /migrated-data --manage restore --backup-dir /checksums
-dazzlesum -r /migrated-data --verify -v
+dazzlesum manage -r /migrated-data restore --backup-dir /checksums
+dazzlesum verify -r /migrated-data -v
 ```
 
 ### Shadow Directory Workflows
@@ -88,13 +88,13 @@ Keep source directories clean during verification:
 
 ```bash
 # Generate checksums without cluttering source directory
-dazzlesum -r /important/data --shadow-dir ./verification-data
+dazzlesum create -r /important/data --shadow-dir ./verification-data
 
 # Verify using shadow directory
-dazzlesum -r /important/data --verify --shadow-dir ./verification-data
+dazzlesum verify -r /important/data --shadow-dir ./verification-data
 
 # Both individual and monolithic in shadow directory
-dazzlesum -r /project --mode both --shadow-dir ./checksums
+dazzlesum create -r /project --mode both --shadow-dir ./checksums
 ```
 
 ## File Organization
