@@ -1,0 +1,15 @@
+# RepoKit Adoption Bootstrap File
+# This file establishes initial git history for RepoKit adoption
+# It can be safely removed after project setup is complete
+
+{
+  "repokit_adoption": {
+    "timestamp": "2025-06-27T08:54:29.090800",
+    "repokit_version": "0.4.0",
+    "project_name": "dazzlesum",
+    "description": "A new project repository",
+    "branch_strategy": "simple",
+    "migration_strategy": "safe",
+    "note": "This file was created to establish git history during RepoKit adoption. It can be safely removed after setup is complete."
+  }
+}
