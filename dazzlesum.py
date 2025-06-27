@@ -2421,12 +2421,14 @@ AUTOMATION:
 
 
 def create_parent_parser():
-    """Create parent parser with shared arguments."""
+    """Create parent parser with common arguments for all subcommands."""
     parent = argparse.ArgumentParser(add_help=False)
     
-    # Global options (shared across all commands)
+    # Positional arguments
     parent.add_argument('directory', nargs='?', default='.',
                        help='Directory to process (default: current directory)')
+    
+    # Options that all subcommands share
     parent.add_argument('-r', '--recursive', action='store_true',
                        help='Process directories recursively')
     parent.add_argument('-v', '--verbose', action='count', default=0,
@@ -2449,10 +2451,11 @@ def create_parent_parser():
     return parent
 
 def create_argument_parser():
-    """Create main parser with subcommands and comprehensive help."""
+    """Create main parser with subcommands."""
+    # Create parent parser with common arguments
     parent = create_parent_parser()
     
-    # Main parser with comprehensive help
+    # Main parser WITHOUT promoted arguments (clean subparser approach)
     parser = argparse.ArgumentParser(
         prog='dazzlesum',
         description='Dazzle Cross-Platform Checksum Tool',
@@ -2481,50 +2484,14 @@ For detailed help on any command: %(prog)s <command> --help
 For comprehensive examples: %(prog)s examples
         """)
     
-    # Add all main arguments for comprehensive help
-    parser.add_argument('directory', nargs='?', default='.',
-                       help='Directory to process (default: current directory)')
-    parser.add_argument('--algorithm', choices=SUPPORTED_ALGORITHMS, default=DEFAULT_ALGORITHM,
-                       help=f'Hash algorithm (default: {DEFAULT_ALGORITHM})')
-    parser.add_argument('-r', '--recursive', action='store_true',
-                       help='Process directories recursively')
-    parser.add_argument('--follow-symlinks', action='store_true',
-                       help='Follow symbolic links and junctions')
-    parser.add_argument('--mode', choices=['individual', 'monolithic', 'both'], default='individual',
-                       help='Checksum generation mode (default: individual)')
-    parser.add_argument('--output', metavar='FILE',
-                       help='Output filename for monolithic mode')
-    parser.add_argument('--shadow-dir', metavar='DIR',
-                       help='Store checksums in parallel shadow directory')
-    parser.add_argument('--include', action='append', metavar='PATTERN',
-                       help='Include files matching pattern (can be used multiple times)')
-    parser.add_argument('--exclude', action='append', metavar='PATTERN',
-                       help='Exclude files matching pattern (can be used multiple times)')
-    parser.add_argument('--line-endings', choices=['auto', 'unix', 'windows', 'preserve'],
-                       default='auto', help='Line ending handling strategy')
-    parser.add_argument('-v', '--verbose', action='count', default=0,
-                       help='Increase verbosity (-v, -vv, -vvv)')
-    parser.add_argument('--quiet', action='store_true',
-                       help='Suppress non-error output')
-    parser.add_argument('--log', metavar='FILE',
-                       help='Write detailed log to file')
-    parser.add_argument('--summary', action='store_true',
-                       help='Show summary progress instead of detailed output')
-    parser.add_argument('--resume', action='store_true',
-                       help='Resume interrupted checksum generation')
-    parser.add_argument('--show-all-verifications', action='store_true',
-                       help='Show all verification results, not just failures')
-    parser.add_argument('--force-python', action='store_true',
-                       help='Force Python implementation (skip native tools)')
-    parser.add_argument('-y', '--yes', action='store_true',
-                       help='Answer yes to all prompts')
+    # Version at main level
     parser.add_argument('--version', action='version', version=f'dazzlesum {__version__}')
     
     # Create subparsers
     subparsers = parser.add_subparsers(dest='command', help='Available commands',
-                                     metavar='COMMAND')
+                                     metavar='COMMAND', required=True)
     
-    # CREATE subcommand (default action)
+    # CREATE subcommand with all its arguments
     create_parser = subparsers.add_parser('create', parents=[parent],
                                          help='Generate checksums for files',
                                          description='Generate checksum files for directory contents')
@@ -2565,7 +2532,7 @@ For comprehensive examples: %(prog)s examples
     update_parser.add_argument('--log', metavar='FILE',
                               help='Write detailed log to file')
     
-    # MANAGE subcommand (preserve existing structure)
+    # MANAGE subcommand
     manage_parser = subparsers.add_parser('manage', parents=[parent],
                                          help='Manage existing checksum files',
                                          description='Backup, remove, restore, or list checksum files')
@@ -2586,6 +2553,58 @@ For comprehensive examples: %(prog)s examples
     shadow_parser = subparsers.add_parser('shadow', help='Detailed help for shadow directories')
     shadow_parser.set_defaults(help_topic='shadow')
     
+    # Override format_help to show all available options in main help
+    original_format_help = parser.format_help
+    
+    def format_help_with_all_options():
+        help_text = original_format_help()
+        
+        # Add comprehensive options section
+        additional_help = """
+Common Options (available for all commands):
+  --algorithm {md5,sha1,sha256,sha512}
+                        Hash algorithm (default: sha256)
+  -r, --recursive       Process directories recursively
+  --follow-symlinks     Follow symbolic links and junctions
+  --shadow-dir DIR      Store checksums in parallel shadow directory
+  --line-endings {auto,unix,windows,preserve}
+                        Line ending handling strategy
+  -v, --verbose         Increase verbosity (-v, -vv, -vvv)
+  --quiet               Suppress non-error output
+  --force-python        Force Python implementation (skip native tools)
+  -y, --yes             Answer yes to all prompts
+
+Command-Specific Options:
+  create:
+    --mode {individual,monolithic,both}
+                        Checksum generation mode (default: individual)
+    --output FILE       Output filename for monolithic mode
+    --include PATTERN   Include files matching pattern (can be used multiple times)
+    --exclude PATTERN   Exclude files matching pattern (can be used multiple times)
+    --resume            Resume interrupted checksum generation
+    --log FILE          Write detailed log to file
+    --summary           Show summary progress instead of detailed output
+    
+  verify:
+    --show-all-verifications
+                        Show all verification results, not just failures
+    --output FILE       Monolithic checksum file to verify against
+    --log FILE          Write detailed log to file
+    
+  update:
+    --include PATTERN   Include files matching pattern (can be used multiple times)
+    --exclude PATTERN   Exclude files matching pattern (can be used multiple times)
+    --log FILE          Write detailed log to file
+    
+  manage:
+    --backup-dir DIR    Backup directory (required for backup/restore)
+    --dry-run           Show what would be done without making changes
+"""
+        # Insert before the positional arguments section
+        return help_text.replace("\npositional arguments:", 
+                                additional_help + "\npositional arguments:")
+    
+    parser.format_help = format_help_with_all_options
     return parser
 
 
@@ -3075,62 +3094,49 @@ def setup_logging(verbosity=0, quiet=False):
 
 
 def main():
-    """Main entry point with intelligent command detection."""
+    """Main entry point with subcommand handling."""
     try:
         parser = create_argument_parser()
         
-        # Determine if user is using new subcommand syntax or classic syntax
-        command_detected = None
+        # Handle help-only commands early
+        if len(sys.argv) > 1 and sys.argv[1] in ['mode', 'examples', 'shadow']:
+            show_detailed_help(sys.argv[1])
+            return 0
+        
+        # Handle deprecated flags and default behavior
         if len(sys.argv) > 1:
             first_arg = sys.argv[1]
-            if first_arg in ['create', 'verify', 'update', 'manage', 'mode', 'examples', 'shadow']:
-                command_detected = first_arg
-            elif first_arg.startswith('-') or Path(first_arg).exists():
-                # Classic syntax: starts with flag or is a directory
-                command_detected = 'create'  # Default to create for classic syntax
-        else:
-            command_detected = 'create'  # Default behavior
-        
-        # Handle help-only commands
-        if command_detected in ['mode', 'examples', 'shadow']:
-            show_detailed_help(command_detected)
-            return 0
             
-        # For the main parser (comprehensive help), we'll parse directly
-        # and handle the command logic based on what's detected
-        if command_detected and command_detected in ['create', 'verify', 'update', 'manage']:
-            # Use subcommand parsing
-            if command_detected == 'verify' or '--verify' in sys.argv:
-                if '--verify' in sys.argv:
-                    # Handle deprecated syntax
-                    logger.warning("DEPRECATION WARNING: --verify flag is deprecated")
-                    logger.warning("Please use: dazzlesum verify [options]")
-                    logger.warning("This compatibility mode will be removed in version 2.0")
-                    # Remove --verify and insert verify subcommand
-                    sys.argv.remove('--verify')
-                    if len(sys.argv) == 1 or not sys.argv[1] in ['create', 'verify', 'update', 'manage']:
-                        sys.argv.insert(1, 'verify')
-                        
-            elif command_detected == 'update' or '--update' in sys.argv:
-                if '--update' in sys.argv:
-                    # Handle deprecated syntax
-                    logger.warning("DEPRECATION WARNING: --update flag is deprecated")
-                    logger.warning("Please use: dazzlesum update [options]")
-                    logger.warning("This compatibility mode will be removed in version 2.0")
-                    # Remove --update and insert update subcommand
-                    sys.argv.remove('--update')
-                    if len(sys.argv) == 1 or not sys.argv[1] in ['create', 'verify', 'update', 'manage']:
-                        sys.argv.insert(1, 'update')
-                        
-            elif command_detected == 'manage' or '--manage' in sys.argv:
-                # Manage command already uses subcommand structure
-                pass
-            else:
-                # Default to create if no explicit command
-                if len(sys.argv) == 1 or not sys.argv[1] in ['create', 'verify', 'update', 'manage']:
-                    sys.argv.insert(1, 'create')
+            # Handle deprecated syntax
+            if first_arg == '--verify':
+                logger.warning("DEPRECATION WARNING: --verify flag is deprecated")
+                logger.warning("Please use: dazzlesum verify [options]")
+                logger.warning("This compatibility mode will be removed in version 2.0")
+                sys.argv[1] = 'verify'  # Replace --verify with verify command
+            elif first_arg == '--update':
+                logger.warning("DEPRECATION WARNING: --update flag is deprecated")
+                logger.warning("Please use: dazzlesum update [options]")
+                logger.warning("This compatibility mode will be removed in version 2.0")
+                sys.argv[1] = 'update'  # Replace --update with update command
+            elif not first_arg.startswith('-') and first_arg not in ['create', 'verify', 'update', 'manage', 'mode', 'examples', 'shadow']:
+                # First argument is likely a directory, insert 'create' command
+                sys.argv.insert(1, 'create')
+        elif len(sys.argv) == 1:
+            # No arguments at all, insert 'create' with current directory
+            sys.argv.extend(['create', '.'])
         
+        # Parse arguments normally
         args = parser.parse_args()
+        
+        # Check if we have a command
+        if not hasattr(args, 'command') or args.command is None:
+            parser.print_help()
+            return 1
+            
+        # Handle help topics that set help_topic attribute
+        if hasattr(args, 'help_topic'):
+            show_detailed_help(args.help_topic)
+            return 0
         
         # Validate directory early
         directory = Path(args.directory).resolve()
@@ -3141,26 +3147,27 @@ def main():
             logger.error(f"Path is not a directory: {directory}")
             return 1
         
-        # Validate argument combinations
-        if args.summary and args.verbose > 0:
-            logger.error("Cannot use --summary and --verbose together")
-            return 1
-        if args.summary and args.quiet:
-            logger.error("Cannot use --summary and --quiet together")
-            return 1
-        
-        # Validate mode requirements
-        if args.mode in ['monolithic', 'both'] and not args.recursive:
-            logger.error("Monolithic modes require --recursive flag")
-            return 1
+        # Validate argument combinations based on command
+        if args.command == 'create':
+            if args.summary and args.verbose > 0:
+                logger.error("Cannot use --summary and --verbose together")
+                return 1
+            if args.summary and args.quiet:
+                logger.error("Cannot use --summary and --quiet together")
+                return 1
+            
+            # Validate mode requirements
+            if args.mode in ['monolithic', 'both'] and not args.recursive:
+                logger.error("Monolithic modes require --recursive flag")
+                return 1
         
         # Set up logging and global state
-        setup_logging(args.verbose, args.quiet or args.summary)
+        setup_logging(args.verbose, args.quiet or (args.command == 'create' and args.summary))
         global dazzle_logger
         dazzle_logger = DazzleLogger(
             verbosity=args.verbose,
             quiet=args.quiet,
-            summary_mode=args.summary
+            summary_mode=(args.command == 'create' and args.summary)
         )
         
         # Log startup info
@@ -3172,8 +3179,8 @@ def main():
             dazzle_logger.debug(f"UNCtools available: {HAVE_UNCTOOLS}")
             dazzle_logger.debug(f"is_windows(): {is_windows()}")
         
-        # Execute the appropriate action based on detected command
-        return execute_main_action(args, command_detected or 'create')
+        # Execute the appropriate action based on command
+        return execute_main_action(args, args.command)
         
     except KeyboardInterrupt:
         print()
