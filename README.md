@@ -1,7 +1,5 @@
 # Dazzlesum
 
-> A cross-platform file checksum utility with DOS compatibility and advanced verification features.
-
 [![GitHub Workflow Status](https://github.com/djdarcy/dazzlesum/actions/workflows/python.yml/badge.svg)](https://github.com/djdarcy/dazzlesum/actions)
 [![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/djdarcy/dazzlesum/releases/tag/v1.1.0)
 [![Python Version](https://img.shields.io/badge/python-%3E%3D3.7-brightgreen)](https://python.org)
@@ -24,7 +22,7 @@ Dazzlesum is a handy checksum tool designed for data integrity verification acro
 
 ### 🔧 Data Integrity Verification
 
-Maintain consistent checksum verification across different operating systems. Generate checksums on your Windows machine and verify them on your Linux environment without losing critical data integrity checks.
+Maintain consistent checksum verification across different operating systems. Generate checksums on your Windows machine and verify them on your Linux environment without losing any data integrity checks.
 
 ### ⚙️ System Administration
 
@@ -32,7 +30,7 @@ Simplify management of complex directory structures and checksum file collection
 
 ### 📁 Content Organization
 
-Create organizational structures using checksum verification, then export and share these verification systems with others. Perfect for media libraries, project references, or any scenario where data integrity needs to be maintained across multiple locations.
+Create organizational structures using checksum verification, then export and share these verification systems with others. Perfect for media libraries (similar to SFVs), project references, or any scenario where data integrity needs to be maintained across multiple locations.
 
 ### 🌐 Network Path Management
 
