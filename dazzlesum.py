@@ -415,7 +415,7 @@ class ShasumManager:
 class MonolithicWriter:
     """Handles streaming writes to monolithic checksum files."""
 
-    def __init__(self, output_path: Path, root_path: Path, algorithm: str):
+    def __init__(self, output_path: Path, root_path: Path, algorithm: str, resume_mode=False):
         self.output_path = Path(output_path)
         self.temp_path = Path(str(output_path) + '.tmp')
         self.root_path = Path(root_path)
@@ -423,6 +423,8 @@ class MonolithicWriter:
         self.file_handle = None
         self.entries_written = 0
         self._is_open = False
+        self._last_progress_report = 0
+        self.resume_mode = resume_mode
 
     def __enter__(self):
         """Context manager entry."""
@@ -444,14 +446,29 @@ class MonolithicWriter:
             # Ensure output directory exists
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Open temp file for writing
-            self.file_handle = open(self.temp_path, 'w', encoding='utf-8', buffering=8192)
+            if self.resume_mode and self.output_path.exists():
+                # Resume mode: copy existing file to temp and append
+                shutil.copy2(self.output_path, self.temp_path)
+                # Open in append mode, but first remove the footer if it exists
+                with open(self.temp_path, 'r+', encoding='utf-8', buffering=1024) as f:
+                    content = f.read()
+                    # Remove existing footer
+                    if content.endswith('# End of checksums\n'):
+                        f.seek(0)
+                        f.write(content[:-len('# End of checksums\n')])
+                        f.truncate()
+                # Now open for appending
+                self.file_handle = open(self.temp_path, 'a', encoding='utf-8', buffering=1024)
+                logger.info(f"Resume mode: Appending to existing monolithic file: {self.output_path}")
+            else:
+                # Normal mode: create new file
+                self.file_handle = open(self.temp_path, 'w', encoding='utf-8', buffering=1024)
+                # Write header
+                timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                self.file_handle.write(f"# Dazzle monolithic checksum file v{__version__} - {self.algorithm} - {timestamp}\n")
+                self.file_handle.write(f"# Root directory: {self.root_path}\n")
+                
             self._is_open = True
-
-            # Write header
-            timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-            self.file_handle.write(f"# Dazzle monolithic checksum file v{__version__} - {self.algorithm} - {timestamp}\n")
-            self.file_handle.write(f"# Root directory: {self.root_path}\n")
             self.file_handle.flush()
 
             logger.debug(f"Opened monolithic file for writing: {self.temp_path}")
@@ -483,8 +500,20 @@ class MonolithicWriter:
                 self.file_handle.write(f"{checksum_info['hash']}  {relative_path}\n")
                 self.entries_written += 1
 
-            # Flush to ensure data is written
+            # Flush to ensure data is written immediately
             self.file_handle.flush()
+            # Force OS to write to disk (for real-time monitoring on large operations)
+            try:
+                os.fsync(self.file_handle.fileno())
+            except (OSError, AttributeError):
+                # fsync might not be available on all platforms/filesystems
+                pass
+            
+            # Report progress periodically for large operations
+            if self.entries_written > 0 and self.entries_written % 10000 == 0:
+                if self.entries_written != self._last_progress_report:
+                    logger.info(f"Monolithic file: {self.entries_written:,} entries written")
+                    self._last_progress_report = self.entries_written
 
         except Exception as e:
             logger.error(f"Failed to append checksums for {directory}: {e}")
@@ -1367,7 +1396,7 @@ class ChecksumGenerator:
                  include_patterns=None, exclude_patterns=None, follow_symlinks=False,
                  log_file=None, summary_mode=False, generate_individual=True,
                  generate_monolithic=False, output_file=None, show_all_verifications=False,
-                 shadow_dir=None):
+                 shadow_dir=None, resume_mode=False):
         self.algorithm = algorithm.lower()
         self.calculator = DazzleHashCalculator(algorithm, line_ending_strategy)
         self.include_patterns = include_patterns or []
@@ -1379,16 +1408,91 @@ class ChecksumGenerator:
         self.generate_monolithic = generate_monolithic
         self.output_file = output_file
         self.show_all_verifications = show_all_verifications
+        self.resume_mode = resume_mode
         self.summary_collector = SummaryCollector()
         self.progress_tracker = None
         
         # Shadow directory support
         self.shadow_dir = Path(shadow_dir) if shadow_dir else None
         self.shadow_resolver = None
+        
+        # Resume support - track processed directories
+        self.processed_directories = set()
+        self.existing_monolithic_entries = set() if resume_mode else None
 
         # Set up log file if specified
         if self.log_file:
             self._setup_log_file()
+    
+    def _initialize_resume_state(self, root_directory: Path):
+        """Initialize resume state by scanning existing checksum files."""
+        if not self.resume_mode:
+            return
+            
+        logger.info("Resume mode: Scanning for existing checksums...")
+        
+        # For individual mode, find existing .shasum files
+        if self.generate_individual:
+            if self.shadow_resolver:
+                # Check shadow directory for existing .shasum files
+                for shadow_file in self.shadow_resolver.shadow_root.rglob('.shasum'):
+                    # Map back to source directory
+                    rel_path = shadow_file.parent.relative_to(self.shadow_resolver.shadow_root)
+                    if rel_path == Path('.'):
+                        source_dir = self.shadow_resolver.source_root
+                    else:
+                        source_dir = self.shadow_resolver.source_root / rel_path
+                    self.processed_directories.add(str(source_dir.resolve()))
+            else:
+                # Check source directories for existing .shasum files
+                for shasum_file in root_directory.rglob('.shasum'):
+                    self.processed_directories.add(str(shasum_file.parent.resolve()))
+        
+        # For monolithic mode, parse existing monolithic file
+        if self.generate_monolithic and self.existing_monolithic_entries is not None:
+            monolithic_path = self._get_monolithic_path(root_directory)
+            if monolithic_path and monolithic_path.exists():
+                try:
+                    with open(monolithic_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                parts = line.split('  ', 1)
+                                if len(parts) == 2:
+                                    _, relative_path = parts
+                                    # Convert back to directory path
+                                    file_path = Path(relative_path)
+                                    dir_path = str((root_directory / file_path.parent).resolve())
+                                    self.existing_monolithic_entries.add(relative_path)
+                                    self.processed_directories.add(dir_path)
+                except Exception as e:
+                    logger.warning(f"Could not parse existing monolithic file for resume: {e}")
+        
+        if self.processed_directories:
+            logger.info(f"Resume mode: Found {len(self.processed_directories)} directories with existing checksums")
+        else:
+            logger.info("Resume mode: No existing checksums found, starting fresh")
+    
+    def _get_monolithic_path(self, root_directory: Path) -> Optional[Path]:
+        """Get the path where monolithic file would be/is stored."""
+        if self.shadow_resolver:
+            return self.shadow_resolver.get_shadow_monolithic_path(self.algorithm, self.output_file)
+        elif self.output_file:
+            output_path = Path(self.output_file)
+            if not output_path.is_absolute():
+                output_path = root_directory / output_path
+            return output_path
+        else:
+            ext = f".{self.algorithm}"
+            return root_directory / f"{MONOLITHIC_DEFAULT_NAME}{ext}"
+    
+    def _should_skip_directory(self, directory: Path) -> bool:
+        """Check if directory should be skipped in resume mode."""
+        if not self.resume_mode:
+            return False
+            
+        dir_str = str(directory.resolve())
+        return dir_str in self.processed_directories
 
     def _setup_log_file(self):
         """Set up detailed logging to file."""
@@ -1650,10 +1754,16 @@ class ChecksumGenerator:
             return {'error': f"Error reading monolithic file: {e}"}
 
         # Determine base path for verification
-        if file_root and Path(file_root).exists():
-            base_path = Path(file_root)
-        else:
-            base_path = root_directory
+        # Always use the user-specified directory for verification
+        # The stored root directory is only for reference/documentation
+        base_path = root_directory
+        
+        # Inform user if verifying against different directory than stored
+        if file_root and str(Path(file_root).resolve()) != str(base_path.resolve()):
+            if dazzle_logger and not dazzle_logger.quiet:
+                dazzle_logger.info(f"Clone verification: Checking {base_path} against checksums from {file_root}", level=1)
+            else:
+                logger.info(f"Clone verification: Checking {base_path} against checksums from {file_root}")
 
         # Check each stored checksum
         for relative_path, expected_hash in stored_checksums.items():
@@ -1720,6 +1830,10 @@ class ChecksumGenerator:
                 dazzle_logger.info(f"Using shadow directory: {self.shadow_dir}", level=1)
             else:
                 logger.info(f"Using shadow directory: {self.shadow_dir}")
+        
+        # Initialize resume state if resume mode is enabled
+        if not verify_only:  # Only for generation, not verification
+            self._initialize_resume_state(root_directory)
 
         # Check for monolithic verification mode
         if verify_only and self.generate_monolithic:
@@ -1790,11 +1904,19 @@ class ChecksumGenerator:
                 ext = f".{self.algorithm}"
                 output_path = root_directory / f"{MONOLITHIC_DEFAULT_NAME}{ext}"
 
-            monolithic_writer = MonolithicWriter(output_path, root_directory, self.algorithm)
+            monolithic_writer = MonolithicWriter(output_path, root_directory, self.algorithm, self.resume_mode)
 
         walker = FIFODirectoryWalker(self.follow_symlinks)
 
         def process_single_directory(directory: Path):
+            # Skip directory if in resume mode and already processed
+            if self._should_skip_directory(directory):
+                if dazzle_logger:
+                    dazzle_logger.info(f"Resume mode: Skipping already processed directory: {directory}", level=1)
+                else:
+                    logger.info(f"Resume mode: Skipping already processed directory: {directory}")
+                return
+                
             if verify_only:
                 if self.generate_monolithic:
                     # This shouldn't happen as we handle it above
@@ -1919,6 +2041,385 @@ class ChecksumGenerator:
                            f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
 
 
+class DetailedHelpAction(argparse.Action):
+    """Custom action to provide detailed help for specific topics."""
+    
+    def __init__(self, option_strings, dest, **kwargs):
+        super().__init__(option_strings, dest, nargs='?', const='general', **kwargs)
+    
+    def __call__(self, parser, namespace, values, option_string=None):
+        topic = values or 'general'
+        self.show_detailed_help(topic)
+        parser.exit()
+    
+    def show_detailed_help(self, topic):
+        """Show detailed help for specific topics."""
+        help_topics = {
+            'general': self._general_help,
+            'mode': self._mode_help,
+            'manage': self._manage_help,
+            'verify': self._verify_help,
+            'shadow': self._shadow_help,
+            'resume': self._resume_help,
+            'examples': self._examples_help
+        }
+        
+        if topic in help_topics:
+            help_topics[topic]()
+        else:
+            print(f"Unknown help topic: {topic}")
+            print(f"Available topics: {', '.join(help_topics.keys())}")
+    
+    def _general_help(self):
+        print("""
+Dazzle Cross-Platform Checksum Tool v{version}
+
+DESCRIPTION:
+    Generate and verify checksums for data integrity verification across
+    different machines and operating systems. Supports individual .shasum
+    files per directory, monolithic files for entire trees, and shadow
+    directories for clean source management.
+
+BASIC USAGE:
+    dazzlesum [OPTIONS] [DIRECTORY]
+
+COMMON WORKFLOWS:
+    dazzlesum                           # Generate checksums for current directory
+    dazzlesum -r                        # Generate recursively
+    dazzlesum -r --verify               # Verify existing checksums
+    dazzlesum -r --mode monolithic      # Single file for entire tree
+    dazzlesum -r --shadow-dir ./checks  # Keep source directories clean
+
+DETAILED HELP:
+    dazzlesum --detailed-help mode      # Help for --mode options
+    dazzlesum --detailed-help manage    # Help for --manage operations  
+    dazzlesum --detailed-help verify    # Help for verification options
+    dazzlesum --detailed-help shadow    # Help for shadow directories
+    dazzlesum --detailed-help resume    # Help for --resume feature
+    dazzlesum --detailed-help examples  # Comprehensive examples
+
+For complete argument list, use: dazzlesum --help
+        """.format(version=__version__))
+    
+    def _mode_help(self):
+        print("""
+--mode OPTION: Choose checksum generation strategy
+
+OPTIONS:
+    individual   Generate .shasum files in each directory (default)
+    monolithic   Generate single checksum file for entire tree
+    both         Generate both individual and monolithic files
+
+DETAILED EXPLANATION:
+
+individual mode (default):
+    Creates .shasum files in each processed directory
+    ├── dir1/
+    │   ├── file1.txt
+    │   ├── file2.txt
+    │   └── .shasum          ← checksums for file1.txt, file2.txt
+    └── dir2/
+        ├── file3.txt
+        └── .shasum          ← checksum for file3.txt
+
+monolithic mode:
+    Creates single checksum file with relative paths
+    ├── dir1/
+    │   ├── file1.txt
+    │   └── file2.txt
+    ├── dir2/
+    │   └── file3.txt
+    └── checksums.sha256     ← all checksums in one file
+    
+    Content format:
+    hash1  dir1/file1.txt
+    hash2  dir1/file2.txt  
+    hash3  dir2/file3.txt
+
+both mode:
+    Combines individual and monolithic approaches
+    Useful when you want flexibility for different verification scenarios
+
+EXAMPLES:
+    dazzlesum -r --mode individual      # Default behavior
+    dazzlesum -r --mode monolithic      # Single file approach
+    dazzlesum -r --mode both            # Maximum flexibility
+    dazzlesum -r --mode monolithic --output my-checksums.sha256  # Custom name
+
+REQUIREMENTS:
+    - monolithic and both modes require --recursive flag
+    - Use --output to specify custom monolithic filename
+        """)
+    
+    def _manage_help(self):
+        print("""
+--manage OPERATION: Manage existing .shasum files
+
+OPERATIONS:
+    backup    Copy all .shasum files to parallel directory structure
+    remove    Delete all .shasum files from directory tree
+    restore   Copy .shasum files back from backup location  
+    list      Show all .shasum files with details
+
+DETAILED EXPLANATION:
+
+backup operation:
+    Creates parallel directory structure with only .shasum files
+    Source:                    Backup:
+    /data/                     /backup/
+    ├── file1.txt              ├── .shasum
+    ├── .shasum                └── subdir/
+    └── subdir/                    └── .shasum
+        ├── file2.txt
+        └── .shasum
+
+remove operation:
+    Removes all .shasum files from directory tree
+    - Prompts for confirmation (use -y to skip)
+    - Use --dry-run to preview what would be removed
+    - Cannot be undone without backup
+
+restore operation:
+    Copies .shasum files from backup back to source locations
+    - Requires --backup-dir to specify backup location
+    - Creates directories as needed
+    - Overwrites existing .shasum files
+
+list operation:
+    Shows all .shasum files with metadata:
+    - File path and size
+    - Modification date
+    - Number of checksums in each file
+    - Summary statistics
+
+EXAMPLES:
+    dazzlesum -r --manage backup --backup-dir ./shasum-backup
+    dazzlesum -r --manage list
+    dazzlesum -r --manage remove --dry-run         # Preview only
+    dazzlesum -r --manage remove -y                # Skip confirmation
+    dazzlesum -r --manage restore --backup-dir ./shasum-backup
+
+REQUIREMENTS:
+    - backup and restore require --backup-dir
+    - All operations require --recursive for subdirectories
+        """)
+    
+    def _verify_help(self):
+        print("""
+VERIFICATION OPTIONS: Check data integrity
+
+--verify:
+    Verify existing checksums instead of generating new ones
+    
+--show-all-verifications:
+    Show all verification results, not just problems (default: problems only)
+
+VERIFICATION BEHAVIOR:
+
+Default (problems only):
+    Only shows failed, missing, or extra files
+    ERROR -   FAIL file1.txt: expected abc123... got def456...
+    WARNING - MISS file2.txt
+    WARNING - EXTRA file3.txt
+    INFO - OK /path: 98 verified, 1 failed, 1 missing, 1 extra
+
+With --show-all-verifications:
+    Shows every file verification result  
+    INFO -    OK file1.txt
+    INFO -    OK file2.txt
+    ERROR -   FAIL file3.txt: expected abc123... got def456...
+    INFO - OK /path: 2 verified, 1 failed, 0 missing, 0 extra
+
+VERIFICATION TYPES:
+
+Individual verification:
+    dazzlesum -r --verify
+    Looks for .shasum files in each directory
+
+Monolithic verification:
+    dazzlesum -r --verify --mode monolithic --output checksums.sha256
+    Verifies against single monolithic file
+
+Shadow directory verification:
+    dazzlesum -r --verify --shadow-dir ./checksums
+    Reads checksums from shadow directory structure
+
+Clone verification:
+    dazzlesum -r --verify --output ./backup/checksums.sha256 ./restored-data
+    Verify copied/restored data against original checksums
+    (Shows "Clone verification" message when source differs)
+
+EXAMPLES:
+    dazzlesum -r --verify                              # Standard verification
+    dazzlesum -r --verify --show-all-verifications     # Show all results
+    dazzlesum -r --verify -v                           # Verbose output
+    dazzlesum -r --verify --shadow-dir ./checksums     # Shadow verification
+        """)
+    
+    def _shadow_help(self):
+        print("""
+--shadow-dir DIRECTORY: Keep source directories clean
+
+CONCEPT:
+    Store checksum files in parallel "shadow" directory structure
+    instead of mixing them with your source files
+
+DIRECTORY STRUCTURE:
+
+Source (stays clean):        Shadow (contains checksums):
+/project/                    /checksums/
+├── src/                     ├── .shasum
+│   ├── main.py              ├── checksums.sha256      (if monolithic)
+│   └── utils.py             ├── src/
+├── docs/                    │   └── .shasum
+│   └── readme.md            └── docs/
+└── tests/                       └── .shasum
+    └── test_main.py
+
+BENEFITS:
+    - Source directories remain completely clean
+    - No .shasum files mixed with your data
+    - Perfect for version control (add shadow dir to .gitignore)
+    - Easy to backup checksums separately from data
+    - Supports all modes: individual, monolithic, both
+
+USE CASES:
+
+Git repositories:
+    dazzlesum -r --shadow-dir ./.checksums
+    echo ".checksums/" >> .gitignore
+
+Data backup workflows:
+    dazzlesum -r --mode both --shadow-dir ./verification
+    # Backup data separately from verification info
+
+Clone verification:
+    dazzlesum -r --mode monolithic --shadow-dir ./checks ./original
+    cp -r ./original ./copy
+    dazzlesum -r --verify --output ./checks/checksums.sha256 ./copy
+
+Network drives:
+    dazzlesum -r --shadow-dir ./local-checksums //server/share
+    # Store checksums locally for faster access
+
+EXAMPLES:
+    dazzlesum -r --shadow-dir ./checksums                    # Individual mode
+    dazzlesum -r --mode monolithic --shadow-dir ./checksums  # Monolithic mode
+    dazzlesum -r --mode both --shadow-dir ./checksums        # Both modes
+    dazzlesum -r --verify --shadow-dir ./checksums           # Verification
+        """)
+    
+    def _resume_help(self):
+        print("""
+--resume: Continue interrupted operations
+
+CONCEPT:
+    Resume checksum generation that was interrupted by system shutdown,
+    network issues, or user cancellation. Skips directories that have
+    already been processed.
+
+HOW IT WORKS:
+    - Detects existing .shasum files or monolithic entries
+    - Skips directories that appear complete
+    - Continues from where the operation left off
+    - Works with all modes: individual, monolithic, both
+
+RESUME CONDITIONS:
+
+Individual mode:
+    Skips directories that have .shasum files with recent timestamps
+    
+Monolithic mode:
+    Parses existing monolithic file and skips directories already included
+    Appends new entries to existing file
+
+Shadow directories:
+    Checks shadow location for existing checksums
+    Resumes based on shadow directory contents
+
+EXAMPLES:
+    dazzlesum -r --resume                               # Resume individual
+    dazzlesum -r --resume --mode monolithic             # Resume monolithic  
+    dazzlesum -r --resume --shadow-dir ./checksums      # Resume with shadow
+    dazzlesum -r --resume --mode both                   # Resume both modes
+
+SAFETY FEATURES:
+    - Never overwrites existing good checksums
+    - Validates partial files before resuming
+    - Can detect and handle corrupted resume state
+    - Use --verify after resume to ensure completeness
+
+LIMITATIONS:
+    - Cannot resume verification operations (only generation)
+    - Requires same algorithm as original operation
+    - Directory structure must not have changed significantly
+
+NOTE: Very large operations (millions of files) benefit most from resume capability
+        """)
+    
+    def _examples_help(self):
+        print("""
+COMPREHENSIVE EXAMPLES
+
+BASIC OPERATIONS:
+    dazzlesum                                    # Current directory
+    dazzlesum /path/to/data                      # Specific directory
+    dazzlesum -r                                 # Recursive processing
+    dazzlesum -r --algorithm sha512              # Different algorithm
+
+GENERATION MODES:
+    dazzlesum -r --mode individual               # .shasum in each directory (default)
+    dazzlesum -r --mode monolithic               # Single checksums.sha256 file  
+    dazzlesum -r --mode both                     # Both individual and monolithic
+    dazzlesum -r --mode monolithic --output my.sha256  # Custom monolithic name
+
+SHADOW DIRECTORIES:
+    dazzlesum -r --shadow-dir ./checksums        # Keep source clean
+    dazzlesum -r --mode both --shadow-dir ./verification  # Both modes in shadow
+
+VERIFICATION:
+    dazzlesum -r --verify                        # Verify existing checksums
+    dazzlesum -r --verify --show-all-verifications  # Show all files, not just problems
+    dazzlesum -r --verify --shadow-dir ./checksums  # Verify from shadow directory
+
+CLONE VERIFICATION:
+    # Generate checksums for original
+    dazzlesum -r --mode monolithic --shadow-dir ./backup-checks ./original-data
+    
+    # Create backup/copy  
+    cp -r ./original-data ./backup-data
+    
+    # Verify copy matches original
+    dazzlesum -r --verify --output ./backup-checks/checksums.sha256 ./backup-data
+
+MANAGEMENT OPERATIONS:
+    dazzlesum -r --manage backup --backup-dir ./shasum-archive    # Backup checksums
+    dazzlesum -r --manage list                                    # List all .shasum files
+    dazzlesum -r --manage remove --dry-run                       # Preview removal
+    dazzlesum -r --manage remove -y                              # Remove without confirmation
+    dazzlesum -r --manage restore --backup-dir ./shasum-archive  # Restore from backup
+
+LARGE DATASET OPERATIONS:
+    dazzlesum -r --mode monolithic --resume            # Resume interrupted operation
+    dazzlesum -r --summary                             # Progress bar for large ops
+    dazzlesum -r --quiet                               # Minimal output
+
+FILTERING:
+    dazzlesum -r --include "*.txt,*.doc"               # Only specific file types
+    dazzlesum -r --exclude "*.tmp,*.log,node_modules/**"  # Exclude patterns
+
+VERSION CONTROL INTEGRATION:
+    dazzlesum -r --shadow-dir ./.checksums             # Generate in shadow
+    echo ".checksums/" >> .gitignore                   # Ignore checksums in Git
+    dazzlesum -r --verify --shadow-dir ./.checksums    # Verify in CI/CD
+
+AUTOMATION:
+    dazzlesum -r --log verify.log                      # Log to file
+    dazzlesum -r -y --manage remove                    # Skip confirmations
+    dazzlesum -r --dry-run --manage remove             # Preview operations
+        """)
+
+
 def create_argument_parser():
     """Create and configure argument parser."""
     parser = argparse.ArgumentParser(
@@ -1938,9 +2439,21 @@ Examples:
   %(prog)s -r --manage remove           # Remove all .shasum files
   %(prog)s -r --manage restore --backup-dir ./backup # Restore from backup
   %(prog)s -r --manage list             # List all .shasum files
+
+For detailed help on specific topics:
+  %(prog)s --detailed-help mode         # Help for --mode options
+  %(prog)s --detailed-help manage       # Help for --manage operations
+  %(prog)s --detailed-help verify       # Help for verification
+  %(prog)s --detailed-help shadow       # Help for shadow directories
+  %(prog)s --detailed-help resume       # Help for --resume feature
+  %(prog)s --detailed-help examples     # Comprehensive examples
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    
+    # Add detailed help option
+    parser.add_argument('--detailed-help', action=DetailedHelpAction,
+                       help='Show detailed help for specific topics (mode, manage, verify, shadow, resume, examples)')
 
     # Positional arguments
     parser.add_argument('directory', nargs='?', default='.',
@@ -1962,6 +2475,8 @@ Examples:
                        help='Verify existing checksums instead of generating')
     parser.add_argument('--update', '-u', action='store_true',
                        help='Update existing checksums (incremental)')
+    parser.add_argument('--resume', action='store_true',
+                       help='Resume interrupted checksum generation operation')
 
     # Management operations (mutually exclusive with generation)
     parser.add_argument('--manage', choices=['backup', 'remove', 'restore', 'list'],
@@ -2214,7 +2729,8 @@ def main():
             generate_monolithic=generate_monolithic,
             output_file=args.output,
             show_all_verifications=args.show_all_verifications,
-            shadow_dir=args.shadow_dir
+            shadow_dir=args.shadow_dir,
+            resume_mode=args.resume
         )
 
         # Force Python implementation if requested
