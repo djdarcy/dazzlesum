@@ -19,6 +19,7 @@ This document provides a comprehensive reference for all dazzlesum commands and 
 | `--mode monolithic` | Single checksum file for entire tree |
 | `--mode both` | Both individual and monolithic files |
 | `--output FILE` | Custom output filename for monolithic mode |
+| `--shadow-dir DIR` | Store checksum files in parallel shadow directory |
 
 ## Management Operations
 
@@ -92,6 +93,27 @@ dazzlesum -r --mode both
 
 # Custom monolithic filename
 dazzlesum -r --mode monolithic --output project-checksums.sha256
+```
+
+### Shadow Directory Operations
+```bash
+# Keep source directories clean
+dazzlesum -r --shadow-dir ./checksums
+
+# Individual mode with shadow directory
+dazzlesum -r --mode individual --shadow-dir ./verification
+
+# Monolithic mode with shadow directory
+dazzlesum -r --mode monolithic --shadow-dir ./checksums
+
+# Both modes with shadow directory
+dazzlesum -r --mode both --shadow-dir ./checksums
+
+# Verify using shadow directory
+dazzlesum -r --verify --shadow-dir ./checksums
+
+# Custom monolithic filename in shadow directory
+dazzlesum -r --mode monolithic --output custom.sha256 --shadow-dir ./checksums
 ```
 
 ### File Management

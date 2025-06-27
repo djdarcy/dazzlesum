@@ -17,6 +17,7 @@ Dazzlesum is a handy checksum tool designed for data integrity verification acro
 - **Advanced Verification**: Problems-only output shows only failed, missing, or extra files by default
 - **Management Operations**: Backup, remove, restore, and list `.shasum` files with comprehensive metadata
 - **Enhanced Logging**: Multiple verbosity levels with visual directory separation and progress tracking
+- **Shadow Directory Support**: Keep source directories clean by storing checksum files in parallel shadow structure
 
 ## Use Cases
 
@@ -85,6 +86,12 @@ dazzlesum -r --mode monolithic
 
 # Generate with verbose output
 dazzlesum -r -vv
+
+# Keep source directories clean with shadow directory
+dazzlesum -r --shadow-dir ./checksums
+
+# Generate monolithic checksum in shadow directory
+dazzlesum -r --mode monolithic --shadow-dir ./checksums
 ```
 
 ### Verify checksums
@@ -98,6 +105,9 @@ dazzlesum -r --verify -v
 
 # Show all verification results
 dazzlesum -r --verify --show-all-verifications
+
+# Verify checksums stored in shadow directory
+dazzlesum -r --verify --shadow-dir ./checksums
 ```
 
 ### Manage checksum files
@@ -120,6 +130,7 @@ dazzlesum -r --manage restore --backup-dir ./checksum-backup
 
 - **[Installation Guide](docs/installation.md)** - Detailed installation instructions for all platforms
 - **[Usage Examples](docs/usage-examples.md)** - Practical examples for common use cases
+- **[Shadow Directory Guide](docs/shadow-directory.md)** - Complete guide to shadow directory operations
 - **[Command Reference](docs/command-reference.md)** - Complete command-line reference
 - **[File Formats](docs/file-formats.md)** - Details about `.shasum` file formats and compatibility
 
@@ -151,7 +162,6 @@ dazzlesum -r --manage restore --backup-dir ./checksum-backup
 - **Optional**: [`unctools` package](https://github.com/djdarcy/UNCtools) for enhanced Windows UNC path support
 
 ## Future Possible Features
-- **Shadow Directory Support**: Parallel verification directories
 - **Incremental Updates**: Smart update detection
 - **Compression**: Archive support for checksum collections
 - **Remote Storage**: Cloud backup integration? (maybe)

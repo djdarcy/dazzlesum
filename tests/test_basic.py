@@ -77,5 +77,119 @@ class TestHelperFunctions(unittest.TestCase):
             self.assertIsInstance(result, bool)
 
 
+class TestShadowDirectoryIntegration(unittest.TestCase):
+    """Test shadow directory integration with main functionality."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.source_dir = Path(self.temp_dir) / "source"
+        self.shadow_dir = Path(self.temp_dir) / "shadow"
+        
+        # Create source directory with test files
+        self.source_dir.mkdir()
+        (self.source_dir / "file1.txt").write_text("Test content 1")
+        (self.source_dir / "file2.txt").write_text("Test content 2")
+        
+        # Create subdirectory
+        subdir = self.source_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "file3.txt").write_text("Test content 3")
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_shadow_directory_with_checksum_generator(self):
+        """Test ChecksumGenerator works correctly with shadow directories."""
+        # Create generator with shadow directory
+        generator = dazzlesum.ChecksumGenerator(
+            algorithm='sha256',
+            shadow_dir=str(self.shadow_dir),
+            generate_individual=True
+        )
+        
+        # Process directory tree
+        generator.process_directory_tree(self.source_dir, recursive=True)
+        
+        # Verify source directory is clean
+        source_files = list(self.source_dir.rglob('*'))
+        checksum_files = [f for f in source_files if f.name == '.shasum']
+        self.assertEqual(len(checksum_files), 0, "Source directory should not contain .shasum files")
+        
+        # Verify shadow directory has checksums
+        shadow_root_shasum = self.shadow_dir / ".shasum"
+        shadow_subdir_shasum = self.shadow_dir / "subdir" / ".shasum"
+        
+        self.assertTrue(shadow_root_shasum.exists(), "Shadow root should contain .shasum file")
+        self.assertTrue(shadow_subdir_shasum.exists(), "Shadow subdir should contain .shasum file")
+
+    def test_shadow_directory_verification_workflow(self):
+        """Test complete workflow: generate, modify, verify with shadow directory."""
+        # Generate checksums
+        generator = dazzlesum.ChecksumGenerator(
+            algorithm='sha256',
+            shadow_dir=str(self.shadow_dir),
+            generate_individual=True
+        )
+        generator.process_directory_tree(self.source_dir, recursive=True)
+        
+        # Verify checksums (should pass)
+        results = generator.verify_checksums_in_directory(self.source_dir)
+        self.assertNotIn('error', results)
+        self.assertEqual(len(results['failed']), 0)
+        
+        # Modify a file
+        (self.source_dir / "file1.txt").write_text("Modified content")
+        
+        # Verify again (should fail)
+        results = generator.verify_checksums_in_directory(self.source_dir)
+        self.assertEqual(len(results['failed']), 1)
+        self.assertIn('file1.txt', [f['filename'] for f in results['failed']])
+
+    def test_shadow_directory_monolithic_integration(self):
+        """Test monolithic mode integration with shadow directories."""
+        # Create generator with monolithic mode and shadow directory
+        generator = dazzlesum.ChecksumGenerator(
+            algorithm='sha256',
+            shadow_dir=str(self.shadow_dir),
+            generate_monolithic=True,
+            generate_individual=False
+        )
+        
+        # Process directory tree
+        generator.process_directory_tree(self.source_dir, recursive=True)
+        
+        # Verify source directory is clean
+        source_files = list(self.source_dir.rglob('*'))
+        checksum_files = [f for f in source_files if f.name.startswith('checksums.')]
+        self.assertEqual(len(checksum_files), 0, "Source directory should not contain monolithic files")
+        
+        # Verify shadow directory has monolithic file
+        shadow_monolithic = self.shadow_dir / "checksums.sha256"
+        self.assertTrue(shadow_monolithic.exists(), "Shadow directory should contain monolithic file")
+        
+        # Verify content includes all files
+        content = shadow_monolithic.read_text()
+        self.assertIn("file1.txt", content)
+        self.assertIn("file2.txt", content)
+        self.assertIn("subdir/file3.txt", content)
+
+    def test_shadow_directory_constants_and_classes(self):
+        """Test that shadow directory classes and constants are accessible."""
+        # Test ShadowPathResolver class exists
+        self.assertTrue(hasattr(dazzlesum, 'ShadowPathResolver'))
+        
+        # Test we can create an instance
+        resolver = dazzlesum.ShadowPathResolver(self.source_dir, self.shadow_dir)
+        self.assertIsNotNone(resolver)
+        
+        # Test basic functionality
+        shadow_path = resolver.get_shadow_shasum_path(self.source_dir)
+        expected = self.shadow_dir / ".shasum"
+        self.assertEqual(shadow_path, expected)
+
+
 if __name__ == '__main__':
     unittest.main()

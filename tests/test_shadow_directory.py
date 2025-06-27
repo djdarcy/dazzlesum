@@ -199,6 +199,113 @@ class TestShadowDirectoryIntegration(unittest.TestCase):
         self.assertEqual(len(results['failed']), 0)
         self.assertEqual(len(results['missing']), 0)
 
+    def test_shadow_directory_monolithic_generation(self):
+        """Test monolithic checksum generation with shadow directory."""
+        generator = dazzlesum.ChecksumGenerator(
+            algorithm='sha256',
+            shadow_dir=str(self.shadow_root),
+            generate_monolithic=True,
+            generate_individual=False
+        )
+        
+        # Process the directory tree recursively (required for monolithic)
+        generator.process_directory_tree(self.source_root, recursive=True)
+        
+        # Verify source directory is clean (no checksum files)
+        source_files = list(self.source_root.rglob('*'))
+        checksum_files = [f for f in source_files if f.name.startswith('checksums.') or f.name == '.shasum']
+        self.assertEqual(len(checksum_files), 0)
+        
+        # Verify shadow directory has monolithic file
+        shadow_monolithic = self.shadow_root / "checksums.sha256"
+        self.assertTrue(shadow_monolithic.exists())
+        
+        # Verify monolithic content includes files from all directories
+        content = shadow_monolithic.read_text()
+        self.assertIn("file1.txt", content)
+        self.assertIn("file2.txt", content)
+        self.assertIn("subdir/file3.txt", content)
+
+    def test_shadow_directory_monolithic_custom_filename(self):
+        """Test monolithic generation with custom filename in shadow directory."""
+        custom_output = "custom-checksums.sha256"
+        generator = dazzlesum.ChecksumGenerator(
+            algorithm='sha256',
+            shadow_dir=str(self.shadow_root),
+            generate_monolithic=True,
+            generate_individual=False,
+            output_file=custom_output
+        )
+        
+        # Process the directory tree
+        generator.process_directory_tree(self.source_root, recursive=True)
+        
+        # Verify shadow directory has custom named file
+        shadow_custom = self.shadow_root / custom_output
+        self.assertTrue(shadow_custom.exists())
+        
+        # Verify default name doesn't exist
+        shadow_default = self.shadow_root / "checksums.sha256"
+        self.assertFalse(shadow_default.exists())
+
+    def test_shadow_directory_both_modes(self):
+        """Test both individual and monolithic generation with shadow directory."""
+        generator = dazzlesum.ChecksumGenerator(
+            algorithm='sha256',
+            shadow_dir=str(self.shadow_root),
+            generate_monolithic=True,
+            generate_individual=True
+        )
+        
+        # Process the directory tree
+        generator.process_directory_tree(self.source_root, recursive=True)
+        
+        # Verify source directory is clean
+        source_files = list(self.source_root.rglob('*'))
+        checksum_files = [f for f in source_files if f.name.startswith('checksums.') or f.name == '.shasum']
+        self.assertEqual(len(checksum_files), 0)
+        
+        # Verify shadow directory has both individual and monolithic files
+        shadow_root_shasum = self.shadow_root / ".shasum"
+        shadow_subdir_shasum = self.shadow_root / "subdir" / ".shasum"
+        shadow_monolithic = self.shadow_root / "checksums.sha256"
+        
+        self.assertTrue(shadow_root_shasum.exists())
+        self.assertTrue(shadow_subdir_shasum.exists())
+        self.assertTrue(shadow_monolithic.exists())
+        
+        # Verify individual files contain correct checksums
+        root_content = shadow_root_shasum.read_text()
+        self.assertIn("file1.txt", root_content)
+        self.assertIn("file2.txt", root_content)
+        
+        subdir_content = shadow_subdir_shasum.read_text()
+        self.assertIn("file3.txt", subdir_content)
+
+    def test_shadow_directory_nested_structure(self):
+        """Test shadow directory with deeply nested source structure."""
+        # Create deeper nested structure
+        deep_dir = self.source_root / "level1" / "level2" / "level3"
+        deep_dir.mkdir(parents=True)
+        (deep_dir / "deep_file.txt").write_text("Deep content")
+        
+        generator = dazzlesum.ChecksumGenerator(
+            algorithm='sha256',
+            shadow_dir=str(self.shadow_root),
+            generate_individual=True
+        )
+        
+        # Process recursively
+        generator.process_directory_tree(self.source_root, recursive=True)
+        
+        # Verify shadow structure mirrors source structure
+        shadow_deep_shasum = self.shadow_root / "level1" / "level2" / "level3" / ".shasum"
+        self.assertTrue(shadow_deep_shasum.exists())
+        
+        # Verify content
+        content = shadow_deep_shasum.read_text()
+        self.assertIn("deep_file.txt", content)
+
 
 if __name__ == '__main__':
     unittest.main()

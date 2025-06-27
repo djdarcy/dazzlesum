@@ -1345,7 +1345,7 @@ class ShadowPathResolver:
         """
         shadow_shasum_path.parent.mkdir(parents=True, exist_ok=True)
     
-    def get_shadow_monolithic_path(self, algorithm: str, output_filename: str = None) -> Path:
+    def get_shadow_monolithic_path(self, algorithm: str, output_filename: Optional[str] = None) -> Path:
         """Get path for monolithic checksum file in shadow directory.
         
         Args:
@@ -1771,7 +1771,17 @@ class ChecksumGenerator:
                 return
 
             # Determine output file path
-            if self.output_file:
+            if self.shadow_resolver:
+                # Use shadow directory for monolithic file
+                output_path = self.shadow_resolver.get_shadow_monolithic_path(
+                    self.algorithm, 
+                    self.output_file
+                )
+                if dazzle_logger:
+                    dazzle_logger.info(f"Using shadow directory for monolithic file: {output_path}", level=1)
+                else:
+                    logger.info(f"Using shadow directory for monolithic file: {output_path}")
+            elif self.output_file:
                 output_path = Path(self.output_file)
                 if not output_path.is_absolute():
                     output_path = root_directory / output_path

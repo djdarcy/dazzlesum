@@ -82,6 +82,21 @@ dazzlesum -r /migrated-data --manage restore --backup-dir /checksums
 dazzlesum -r /migrated-data --verify -v
 ```
 
+### Shadow Directory Workflows
+
+Keep source directories clean during verification:
+
+```bash
+# Generate checksums without cluttering source directory
+dazzlesum -r /important/data --shadow-dir ./verification-data
+
+# Verify using shadow directory
+dazzlesum -r /important/data --verify --shadow-dir ./verification-data
+
+# Both individual and monolithic in shadow directory
+dazzlesum -r /project --mode both --shadow-dir ./checksums
+```
+
 ## File Organization
 
 ### Media Library Management
@@ -102,6 +117,21 @@ dazzlesum -r /project --exclude "*.tmp,*.log,node_modules/**,__pycache__/**"
 dazzlesum -r /project --verify --exclude "*.tmp,*.log,node_modules/**,__pycache__/**"
 ```
 
+### Version Control Integration with Shadow Directories
+```bash
+# Keep Git repository clean by using shadow directories
+dazzlesum -r ./src --shadow-dir ./.checksums
+
+# Add shadow directory to .gitignore
+echo ".checksums/" >> .gitignore
+
+# Verify code integrity during CI/CD
+dazzlesum -r ./src --verify --shadow-dir ./.checksums -v
+
+# Generate release checksums in shadow directory
+dazzlesum -r ./dist --mode monolithic --shadow-dir ./release-verification
+```
+
 ## Performance Optimization
 
 ### Large Directory Trees
@@ -120,6 +150,9 @@ dazzlesum -r "//server/share" --algorithm sha256
 
 # Backup checksums before network operations
 dazzlesum -r "//server/share" --manage backup --backup-dir ./network-checksums
+
+# Use shadow directories for network shares to avoid network I/O for checksums
+dazzlesum -r "//server/share" --shadow-dir ./local-checksums
 ```
 
 ## Troubleshooting
@@ -151,6 +184,9 @@ dazzlesum.py -r C:\MyData
 
 REM Verify with UNC paths
 dazzlesum.py -r \\server\share --verify
+
+REM Use shadow directories on Windows
+dazzlesum.py -r C:\ImportantData --shadow-dir C:\Checksums
 ```
 
 ### PowerShell
@@ -160,6 +196,9 @@ python dazzlesum.py -r C:\Projects --mode both
 
 # Backup to different drive
 python dazzlesum.py -r C:\Data --manage backup --backup-dir D:\Checksums
+
+# Shadow directories with PowerShell
+python dazzlesum.py -r C:\ProjectData --shadow-dir D:\ProjectChecksums --mode both
 ```
 
 ### Unix/Linux
@@ -206,4 +245,47 @@ echo Verifying backup...
 python dazzlesum.py -r D:\Backup\Data --verify --output checksums.sha256
 
 echo Backup and verification complete.
+```
+
+### Shadow Directory Automation
+
+```bash
+#!/bin/bash
+# clean-verification.sh - Keep source directories clean while verifying integrity
+
+SOURCE_DIR="${1:-./data}"
+SHADOW_DIR="${2:-./.checksums}"
+
+echo "Generating checksums for $SOURCE_DIR using shadow directory $SHADOW_DIR..."
+dazzlesum -r "$SOURCE_DIR" --mode both --shadow-dir "$SHADOW_DIR"
+
+echo "Verifying integrity using shadow directory..."
+if dazzlesum -r "$SOURCE_DIR" --verify --shadow-dir "$SHADOW_DIR" --quiet; then
+    echo "✓ All files verified successfully (source directory remains clean)"
+else
+    echo "✗ Verification failed - check shadow directory: $SHADOW_DIR"
+    exit 1
+fi
+```
+
+### Git Pre-commit Hook with Shadow Directories
+
+```bash
+#!/bin/bash
+# .git/hooks/pre-commit - Verify integrity before commits
+
+SHADOW_DIR="./.checksums"
+
+# Generate checksums for staged files using shadow directory
+echo "Verifying staged files integrity..."
+dazzlesum -r . --shadow-dir "$SHADOW_DIR" --exclude ".git/**,.checksums/**"
+
+# Verify integrity
+if dazzlesum -r . --verify --shadow-dir "$SHADOW_DIR" --exclude ".git/**,.checksums/**" --quiet; then
+    echo "✓ File integrity verified"
+    exit 0
+else
+    echo "✗ File integrity check failed"
+    exit 1
+fi
 ```
