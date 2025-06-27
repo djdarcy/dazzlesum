@@ -607,7 +607,7 @@ class ProgressTracker:
         if seconds < 60:
             return f"{seconds:.0f}s"
         elif seconds < 3600:
-            return f"{seconds/60:.0f}m {seconds%60:.0f}s"
+            return f"{seconds/60:.0f}m {seconds % 60:.0f}s"
         else:
             hours = int(seconds // 3600)
             minutes = int((seconds % 3600) // 60)

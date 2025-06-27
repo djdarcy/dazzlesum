@@ -44,8 +44,10 @@ setup(
         ],
         'dev': [
             'pytest>=7.0.0',
-            'black>=23.0.0',
-            'flake8>=6.0.0',
+            'black>=23.0.0;python_version>="3.8"',
+            'black==23.3.0;python_version=="3.7"',  # Last version supporting Python 3.7
+            'flake8>=5.0.0;python_version=="3.7"',  # Max version for Python 3.7
+            'flake8>=6.0.0;python_version>="3.8"',
             'mypy>=1.0.0',
         ],
     },
