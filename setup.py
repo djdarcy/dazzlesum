@@ -3,6 +3,7 @@ from setuptools import setup
 import os
 
 # Read version from dazzlesum.py
+
 def get_version():
     with open('dazzlesum.py', 'r') as f:
         for line in f:
@@ -11,6 +12,7 @@ def get_version():
     return '1.1.0'
 
 # Read long description from README
+
 def get_long_description():
     if os.path.exists('README.md'):
         with open('README.md', 'r', encoding='utf-8') as f:
