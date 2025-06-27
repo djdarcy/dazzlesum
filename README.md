@@ -2,12 +2,12 @@
 
 > A cross-platform file checksum utility with DOS compatibility and advanced verification features.
 
-Dazzlesum is a handy checksum tool designed for data integrity verification across different machines and operating systems. It generates folder-specific checksum files (`.shasum`) that enable verification of file collections, with special attention to DOS shell compatibility and cross-platform consistency.
-
-![GitHub Workflow Status](https://github.com/djdarcy/dazzlesum/actions/workflows/python.yml/badge.svg)
+[![GitHub Workflow Status](https://github.com/djdarcy/dazzlesum/actions/workflows/python.yml/badge.svg)](https://github.com/djdarcy/dazzlesum/actions)
 [![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/djdarcy/dazzlesum/releases/tag/v1.1.0)
 [![Python Version](https://img.shields.io/badge/python-%3E%3D3.7-brightgreen)](https://python.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+
+Dazzlesum is a handy checksum tool designed for data integrity verification across different machines and operating systems. It generates folder-specific checksum files (`.shasum`) that enable verification of file collections, with special attention to DOS shell compatibility and cross-platform consistency.
 
 ## Features
 
