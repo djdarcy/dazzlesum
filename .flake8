@@ -1,0 +1,52 @@
+[flake8]
+max-line-length = 127
+# Temporarily increased for existing code
+max-complexity = 50
+ignore = 
+    # E203: whitespace before ':' (conflicts with black)
+    E203,
+    # W503: line break before binary operator (conflicts with black)
+    W503,
+    # E501: line too long (we set max-line-length above)
+    E501,
+    # W291: trailing whitespace (will fix later)
+    W291,
+    # W293: blank line contains whitespace (will fix later)  
+    W293,
+    # W292: no newline at end of file (will fix later)
+    W292,
+    # F401: imported but unused (some intentional for optional imports)
+    F401,
+    # E704: multiple statements on one line (will fix later)
+    E704,
+    # E128: continuation line under-indented (will fix later)
+    E128,
+    # E402: module level import not at top (tests have conditional imports)
+    E402,
+    # E226: missing whitespace around arithmetic operator (will fix later)
+    E226,
+    # E302: expected 2 blank lines (will fix later)
+    E302,
+    # E305: expected 2 blank lines after class/function (will fix later)
+    E305,
+    # F541: f-string is missing placeholders (will fix later)
+    F541,
+    # W504: line break after binary operator (will fix later)
+    W504
+exclude = 
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    env,
+    build,
+    dist,
+    *.egg-info,
+    .tox,
+    .mypy_cache,
+    .pytest_cache
+per-file-ignores = 
+    # Allow unused imports in __init__.py files
+    __init__.py:F401,
+    # Tests can have imports after setup
+    tests/*.py:E402,F401

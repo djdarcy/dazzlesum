@@ -5,41 +5,128 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
+            "name": "Dazzlesum: Help",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["--help"],
             "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
             "justMyCode": true
         },
         {
-            "name": "Python: Module",
+            "name": "Dazzlesum: Generate checksums (current dir)",
             "type": "python",
             "request": "launch",
-            "module": "dazzlesum",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": [],
             "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
             "justMyCode": true
         },
         {
-            "name": "Python: Current File with Arguments",
+            "name": "Dazzlesum: Generate recursive",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r"],
             "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: Generate recursive with verbose",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r", "-vv"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: Verify recursive",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r", "--verify"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: Verify with all results",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r", "--verify", "--show-all-verifications"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: Monolithic mode",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r", "--mode", "monolithic"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: Both modes",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r", "--mode", "both"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: SHA512 algorithm",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r", "--algorithm", "sha512"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: Manage list",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r", "--manage", "list"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: Manage backup",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
+            "args": ["-r", "--manage", "backup", "--backup-dir", "./test-backup"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Dazzlesum: Debug with custom args",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dazzlesum.py",
             "args": [
-                // Add your arguments here
-                // Examples:
-                // "--input", "${workspaceFolder}/data/input.txt",
-                // "--output", "${workspaceFolder}/data/output.txt",
-                // Use VS Code's input picker to add arguments at runtime
+                // Add custom arguments for debugging specific scenarios
                 "${command:pickArgs}"
-            ]
-        }
-    ],
-    "compounds": [
-        {
-            "name": "Server/Client",
-            "configurations": ["Python: Module", "Python: Current File"]
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "stopOnEntry": false
         }
     ]
 }
