@@ -1716,7 +1716,10 @@ class ChecksumGenerator:
                 source_root=root_directory,
                 shadow_root=self.shadow_dir
             )
-            dazzle_logger.info(f"Using shadow directory: {self.shadow_dir}", level=1)
+            if dazzle_logger:
+                dazzle_logger.info(f"Using shadow directory: {self.shadow_dir}", level=1)
+            else:
+                logger.info(f"Using shadow directory: {self.shadow_dir}")
 
         # Check for monolithic verification mode
         if verify_only and self.generate_monolithic:
