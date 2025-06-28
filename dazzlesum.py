@@ -1868,14 +1868,12 @@ class ChecksumGenerator:
 
         # Initialize progress tracking if summary mode
         if self.summary_mode:
-            if not self.summary_mode:
-                logger.info("Counting directories and files...")
+            logger.info("Counting directories and files...")
             total_dirs, total_files = count_dirs_and_files(
                 root_directory, self.include_patterns, self.exclude_patterns, self.follow_symlinks
             )
             self.progress_tracker = ProgressTracker(total_dirs, total_files, True)
-            if not self.summary_mode:
-                logger.info(f"Found {total_dirs} directories, {total_files} files to process")
+            logger.info(f"Found {total_dirs} directories, {total_files} files to process")
 
         # Set up monolithic writer if needed
         monolithic_writer = None
