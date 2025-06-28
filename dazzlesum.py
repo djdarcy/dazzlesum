@@ -735,8 +735,19 @@ class SummaryCollector:
 
 
 def count_dirs_and_files(root_path: Path, include_patterns, exclude_patterns,
-                        follow_symlinks=False) -> Tuple[int, int]:
-    """Pre-walk directory tree to count directories and files."""
+                        follow_symlinks=False, recursive=True) -> Tuple[int, int]:
+    """Pre-walk directory tree to count directories and files.
+    
+    Args:
+        root_path: Root directory to count from
+        include_patterns: Patterns for files to include
+        exclude_patterns: Patterns for files to exclude  
+        follow_symlinks: Whether to follow symbolic links
+        recursive: Whether to count subdirectories recursively
+        
+    Returns:
+        Tuple of (directory_count, file_count)
+    """
     symlink_handler = SymlinkHandler()
     total_dirs = 0
     total_files = 0
@@ -766,7 +777,8 @@ def count_dirs_and_files(root_path: Path, include_patterns, exclude_patterns,
                     if _should_include_file_simple(item, include_patterns, exclude_patterns):
                         total_files += 1
                 elif item.is_dir() and not symlink_handler.is_visited(item):
-                    dirs_to_visit.append(item)
+                    if recursive:
+                        dirs_to_visit.append(item)
         except Exception:
             # Skip directories we can't access
             continue
@@ -1873,7 +1885,7 @@ class ChecksumGenerator:
         if self.summary_mode:
             # Don't print info messages that interfere with progress bar
             total_dirs, total_files = count_dirs_and_files(
-                root_directory, self.include_patterns, self.exclude_patterns, self.follow_symlinks
+                root_directory, self.include_patterns, self.exclude_patterns, self.follow_symlinks, recursive
             )
             self.progress_tracker = ProgressTracker(total_dirs, total_files, True)
 
