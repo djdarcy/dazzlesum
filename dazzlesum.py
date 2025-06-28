@@ -2044,7 +2044,7 @@ class ChecksumGenerator:
             status = "OK"
             if dazzle_logger:
                 dazzle_logger.info(f"{status} {path}: {verified_count} verified, "
-                                 f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
+                                 f"{failed_count} failed, {missing_count} missing, {extra_count} extra", level=0)
             else:
                 logger.info(f"{status} {path}: {verified_count} verified, "
                            f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
@@ -2485,12 +2485,12 @@ Examples:
   %(prog)s verify -r                                    # Verify existing checksums
   %(prog)s verify -r --show-all-verifications           # Show all verification results
   %(prog)s update -r                                    # Update changed checksums
-  %(prog)s manage -r backup --backup-dir ./backup      # Backup all .shasum files
+  %(prog)s manage -r backup --backup-dir ./backup       # Backup all .shasum files
   %(prog)s manage -r list                               # List all .shasum files
   
 Clone Verification Workflow:
   %(prog)s create -r --mode monolithic /original/folder       # Generate checksums for original
-  cp -r /original/folder /clone/folder                        # Create clone
+  cp -r /original/folder /clone/folder                         # Create clone
   %(prog)s verify --output checksums.sha256 /clone/folder     # Verify clone matches original
   
 Shadow Directory (keeps source clean):
@@ -3110,8 +3110,22 @@ def setup_logging(verbosity=0, quiet=False):
         handler.setLevel(level)
 
 
+def detect_context_command(directory_path='.'):
+    """Detect the appropriate command based on existing files in directory.
+    
+    Returns:
+        str: 'verify' if .shasum files exist, 'create' otherwise
+    """
+    try:
+        directory = Path(directory_path).resolve()
+        if directory.is_dir() and (directory / SHASUM_FILENAME).exists():
+            return 'verify'
+    except Exception:
+        pass
+    return 'create'
+
 def main():
-    """Main entry point with subcommand handling."""
+    """Main entry point with subcommand handling and context detection."""
     try:
         parser = create_argument_parser()
         
@@ -3120,16 +3134,23 @@ def main():
             show_detailed_help(sys.argv[1])
             return 0
         
-        # Handle default behavior
+        # Handle default behavior with context detection
         if len(sys.argv) > 1:
             first_arg = sys.argv[1]
             
             if not first_arg.startswith('-') and first_arg not in ['create', 'verify', 'update', 'manage', 'mode', 'examples', 'shadow']:
-                # First argument is likely a directory, insert 'create' command
-                sys.argv.insert(1, 'create')
+                # First argument is likely a directory, detect appropriate command
+                detected_command = detect_context_command(first_arg)
+                sys.argv.insert(1, detected_command)
+                logger.info(f"Context-aware: executing '{detected_command} {first_arg}'")
         elif len(sys.argv) == 1:
-            # No arguments at all, insert 'create' with current directory
-            sys.argv.extend(['create', '.'])
+            # No arguments at all, detect command for current directory
+            detected_command = detect_context_command('.')
+            sys.argv.extend([detected_command, '.'])
+            logger.info(f"Context-aware: executing '{detected_command} .'")
+            if detected_command == 'verify':
+                # Add --show-all-verifications for better default verify behavior
+                sys.argv.append('--show-all-verifications')
         
         # Parse arguments normally
         args = parser.parse_args()
