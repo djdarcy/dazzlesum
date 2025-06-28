@@ -145,14 +145,12 @@ class TestCLIInterface(unittest.TestCase):
         result = self.run_dazzlesum(["verify", "--output", str(mono_file), str(self.test_dir)])
         self.assertEqual(result.returncode, 0)
     
-    def test_deprecation_warnings(self):
-        """Test that old syntax shows deprecation warnings."""
+    def test_deprecated_syntax_rejected(self):
+        """Test that old syntax is no longer supported."""
         result = self.run_dazzlesum(["--verify", str(self.test_dir)], expect_success=False)
-        # The command should still work (backward compatibility)
-        # but show deprecation warnings
-        self.assertIn("DEPRECATION WARNING", result.stderr)
-        self.assertIn("--verify", result.stderr)
-        self.assertIn("dazzlesum verify", result.stderr)
+        # The command should fail with error message
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("error", result.stderr)
     
     def test_default_behavior(self):
         """Test that no subcommand defaults to create."""

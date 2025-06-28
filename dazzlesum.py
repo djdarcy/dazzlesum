@@ -101,6 +101,9 @@ class DazzleLogger:
 
     def _add_spacing_if_needed(self):
         """Add blank line for directory separation."""
+        # Don't add spacing in summary mode as it interferes with progress bar
+        if self.summary_mode:
+            return
         if self.last_was_directory and self._should_log(1):
             print()
 
@@ -1868,12 +1871,11 @@ class ChecksumGenerator:
 
         # Initialize progress tracking if summary mode
         if self.summary_mode:
-            logger.info("Counting directories and files...")
+            # Don't print info messages that interfere with progress bar
             total_dirs, total_files = count_dirs_and_files(
                 root_directory, self.include_patterns, self.exclude_patterns, self.follow_symlinks
             )
             self.progress_tracker = ProgressTracker(total_dirs, total_files, True)
-            logger.info(f"Found {total_dirs} directories, {total_files} files to process")
 
         # Set up monolithic writer if needed
         monolithic_writer = None
@@ -3101,22 +3103,11 @@ def main():
             show_detailed_help(sys.argv[1])
             return 0
         
-        # Handle deprecated flags and default behavior
+        # Handle default behavior
         if len(sys.argv) > 1:
             first_arg = sys.argv[1]
             
-            # Handle deprecated syntax
-            if first_arg == '--verify':
-                logger.warning("DEPRECATION WARNING: --verify flag is deprecated")
-                logger.warning("Please use: dazzlesum verify [options]")
-                logger.warning("This compatibility mode will be removed in version 2.0")
-                sys.argv[1] = 'verify'  # Replace --verify with verify command
-            elif first_arg == '--update':
-                logger.warning("DEPRECATION WARNING: --update flag is deprecated")
-                logger.warning("Please use: dazzlesum update [options]")
-                logger.warning("This compatibility mode will be removed in version 2.0")
-                sys.argv[1] = 'update'  # Replace --update with update command
-            elif not first_arg.startswith('-') and first_arg not in ['create', 'verify', 'update', 'manage', 'mode', 'examples', 'shadow']:
+            if not first_arg.startswith('-') and first_arg not in ['create', 'verify', 'update', 'manage', 'mode', 'examples', 'shadow']:
                 # First argument is likely a directory, insert 'create' command
                 sys.argv.insert(1, 'create')
         elif len(sys.argv) == 1:
