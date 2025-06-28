@@ -648,6 +648,11 @@ class ProgressTracker:
     def finish(self):
         """Complete the progress display."""
         if self.show_progress and (self.total_dirs > 0 or self.total_files > 0):
+            # Force final 100% display
+            self.processed_dirs = self.total_dirs
+            self.processed_files = self.total_files
+            self._display_progress()
+            
             print()  # New line after progress bar
             elapsed = time.time() - self.start_time
             logger.info(f"Completed {self.processed_dirs} directories, {self.processed_files} files in {self._format_duration(elapsed)}")
