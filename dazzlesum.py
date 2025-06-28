@@ -351,6 +351,10 @@ class ColorFormatter:
     def hash_value(self, text):
         """Format hash value text (light gray)."""
         return self.colorize(text, 'light_gray')
+    
+    def info_secondary(self, text):
+        """Format secondary info text (light blue/cyan) for informational messages."""
+        return self.colorize(text, 'light_blue')
 
 
 # Global color formatter instance - will be set up in main()
@@ -2167,10 +2171,25 @@ class ChecksumGenerator:
     def _print_verification_results(self, path: Path, results: Dict[str, Any], show_all=False):
         """Print verification results for a directory or monolithic file."""
         if 'error' in results:
-            if dazzle_logger:
-                dazzle_logger.error(f"{path}: {results['error']}")
+            # Check if this is a "No .shasum file found" informational message
+            error_msg = results['error']
+            if "No .shasum file found" in error_msg:
+                # Use info_secondary color for missing .shasum files (not a failure, just informational)
+                if color_formatter:
+                    colored_msg = color_formatter.info_secondary(f"{path}: {error_msg}")
+                else:
+                    colored_msg = f"{path}: {error_msg}"
+                
+                if dazzle_logger:
+                    dazzle_logger.info(colored_msg, level=0)
+                else:
+                    logger.info(colored_msg)
             else:
-                logger.error(f"{path}: {results['error']}")
+                # Regular error - use error formatting
+                if dazzle_logger:
+                    dazzle_logger.error(f"{path}: {error_msg}")
+                else:
+                    logger.error(f"{path}: {error_msg}")
             return
 
         verified_count = len(results['verified'])
