@@ -85,11 +85,21 @@ logger = logging.getLogger(__name__)
 class DazzleLogger:
     """Enhanced logger with DOS-compatible verbosity levels and visual separation."""
 
-    def __init__(self, verbosity=0, quiet=False, summary_mode=False):
+    def __init__(self, verbosity=0, quiet=False, summary_mode=False, show_log_types=None):
         self.verbosity = verbosity
         self.quiet = quiet
         self.summary_mode = summary_mode
         self.last_was_directory = False
+        
+        # Determine if we should show log type prefixes
+        # Priority: explicit parameter > environment variable > verbosity-based default
+        if show_log_types is not None:
+            self.show_log_types = show_log_types
+        elif os.environ.get('DAZZLESUM_SHOW_LOG_TYPES', '').lower() in ('1', 'true', 'yes'):
+            self.show_log_types = True
+        else:
+            # Clean output by default (verbosity 0), show log types for higher verbosity
+            self.show_log_types = verbosity >= 1
 
     def _should_log(self, level):
         """Check if we should log at this verbosity level."""
@@ -109,15 +119,27 @@ class DazzleLogger:
 
     def error(self, msg):
         """Always show errors."""
+        if color_formatter:
+            # Only colorize if message doesn't already have color codes
+            if '\033[' not in msg:
+                msg = color_formatter.error(msg)
         logger.error(msg)
 
     def warning(self, msg):
         """Always show warnings."""
+        if color_formatter:
+            # Only colorize if message doesn't already have color codes
+            if '\033[' not in msg:
+                msg = color_formatter.warning(msg)
         logger.warning(msg)
 
     def info(self, msg, level=1):
         """Info messages with verbosity level."""
         if self._should_log(level):
+            if color_formatter and level == 0:
+                # Only colorize level 0 info messages (important info)
+                if '\033[' not in msg:
+                    msg = color_formatter.info(msg)
             logger.info(msg)
 
     def debug(self, msg):
@@ -183,6 +205,159 @@ class DazzleLogger:
 
 # Global logger instance - will be set up in main()
 dazzle_logger = None
+
+
+class ColorFormatter:
+    """Cross-platform color formatter for terminal output."""
+    
+    def __init__(self, use_colors=None):
+        """Initialize color formatter.
+        
+        Args:
+            use_colors: If None, auto-detect terminal support. Otherwise bool.
+        """
+        self.colorama_available = False
+        self.use_colors = False
+        
+        # Try to import and initialize colorama for Windows support
+        try:
+            import colorama
+            colorama.init()  # Enable ANSI escape sequences on Windows
+            self.colorama_available = True
+        except ImportError:
+            pass
+        
+        if use_colors is None:
+            self.use_colors = self._supports_color()
+        else:
+            self.use_colors = use_colors
+    
+    def _supports_color(self):
+        """Check if terminal supports ANSI colors."""
+        import sys
+        
+        # Check environment variable to disable colors
+        if os.environ.get('NO_COLOR') or os.environ.get('DAZZLESUM_NO_COLOR'):
+            return False
+        
+        # Check if stdout is a terminal
+        if not hasattr(sys.stdout, 'isatty') or not sys.stdout.isatty():
+            return False
+        
+        # If we have colorama, Windows should work
+        if is_windows() and self.colorama_available:
+            return True
+        
+        # Check environment variables for Unix-like systems
+        term = os.environ.get('TERM', '').lower()
+        colorterm = os.environ.get('COLORTERM', '').lower()
+        
+        # Explicit color support indicators
+        if os.environ.get('FORCE_COLOR') or os.environ.get('DAZZLESUM_FORCE_COLOR'):
+            return True
+        
+        # Most modern terminals support color
+        if any(x in term for x in ['color', 'xterm', 'screen', 'tmux']):
+            return True
+        if colorterm:
+            return True
+        
+        # Windows 10+ with ANSI support (without colorama)
+        if is_windows():
+            try:
+                # Try to enable ANSI escape sequences
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+                mode = ctypes.c_ulong()
+                kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+                # Enable VIRTUAL_TERMINAL_PROCESSING
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+                return True
+            except Exception:
+                # Fallback: for older Windows or restricted environments
+                return False
+        
+        return False
+    
+    # ANSI color codes
+    COLORS = {
+        'red': '\033[91m',
+        'green': '\033[92m', 
+        'yellow': '\033[93m',
+        'blue': '\033[94m',
+        'light_blue': '\033[96m',
+        'light_green': '\033[92m',
+        'light_red': '\033[91m',
+        'light_yellow': '\033[93m',
+        'white': '\033[97m',
+        'light_gray': '\033[90m',
+        'bold': '\033[1m',
+        'reset': '\033[0m'
+    }
+    
+    def colorize(self, text, color=None, bold=False):
+        """Apply color and formatting to text.
+        
+        Args:
+            text: Text to colorize
+            color: Color name from COLORS dict
+            bold: Whether to make text bold
+            
+        Returns:
+            Formatted text with ANSI codes or plain text if colors disabled
+        """
+        if not self.use_colors:
+            return text
+        
+        codes = []
+        if bold:
+            codes.append(self.COLORS['bold'])
+        if color and color in self.COLORS:
+            codes.append(self.COLORS[color])
+        
+        if codes:
+            return ''.join(codes) + text + self.COLORS['reset']
+        return text
+    
+    def success(self, text, bold=False):
+        """Format success text (green)."""
+        return self.colorize(text, 'green', bold)
+    
+    def error(self, text, bold=False):
+        """Format error text (red)."""
+        return self.colorize(text, 'light_red', bold)
+    
+    def warning(self, text, bold=False):
+        """Format warning text (yellow)."""
+        return self.colorize(text, 'light_yellow', bold)
+    
+    def info(self, text, bold=False):
+        """Format info text (light green)."""
+        return self.colorize(text, 'light_green', bold)
+    
+    def extra(self, text, bold=False):
+        """Format extra files text (light blue)."""
+        return self.colorize(text, 'light_blue', bold)
+    
+    def bold_number(self, number):
+        """Format a number in bold."""
+        return self.colorize(str(number), bold=True)
+    
+    def filename(self, text):
+        """Format filename text (bold white)."""
+        return self.colorize(text, 'white', bold=True)
+    
+    def hash_value(self, text):
+        """Format hash value text (light gray)."""
+        return self.colorize(text, 'light_gray')
+
+
+# Global color formatter instance - will be set up in main()
+color_formatter = None
+
+# Global exit code for verification operations - will be set by verification results
+verification_exit_code = 0
 
 
 class ShasumManager:
@@ -2007,55 +2182,97 @@ class ChecksumGenerator:
         if show_all or (dazzle_logger and dazzle_logger.verbosity >= 2):
             # Show all verification results
             for filename in results['verified']:
-                logger.info(f"  OK {filename}")
+                if color_formatter:
+                    logger.info(f" {color_formatter.success('OK')} {color_formatter.filename(filename)}")
+                else:
+                    logger.info(f" OK {filename}")
 
         # Always show problems
         if failed_count > 0:
             for item in results['failed']:
                 if isinstance(item, dict):
                     if 'error' in item:
-                        if dazzle_logger:
-                            dazzle_logger.error(f"  ERROR {item['filename']}: {item['error']}")
+                        if color_formatter:
+                            error_text = f" {color_formatter.error('ERROR')} {color_formatter.filename(item['filename'])}: {item['error']}"
                         else:
-                            logger.error(f"  ERROR {item['filename']}: {item['error']}")
+                            error_text = f" ERROR {item['filename']}: {item['error']}"
+                        
+                        if dazzle_logger:
+                            dazzle_logger.error(error_text)
+                        else:
+                            logger.error(error_text)
                     else:
-                        # Always show hash mismatches (problems)
-                        if dazzle_logger:
-                            logger.error(f"  FAIL {item['filename']}: "
-                                       f"expected {item['expected'][:16]}... "
-                                       f"got {item['actual'][:16]}...")
+                        # Always show hash mismatches with new format: expected HASH... got HASH... | filename
+                        if color_formatter:
+                            expected_hash = color_formatter.hash_value(f"expected {item['expected'][:16]}...")
+                            got_hash = color_formatter.hash_value(f"got {item['actual'][:16]}...")
+                            filename_part = color_formatter.filename(item['filename'])
+                            fail_text = f" {color_formatter.error('FAIL')} {expected_hash} {got_hash} | {filename_part}"
                         else:
-                            logger.error(f"  FAIL {item['filename']}: "
-                                       f"expected {item['expected'][:16]}... "
-                                       f"got {item['actual'][:16]}...")
+                            fail_text = f" FAIL expected {item['expected'][:16]}... got {item['actual'][:16]}... | {item['filename']}"
+                        
+                        if dazzle_logger:
+                            logger.error(fail_text)
+                        else:
+                            logger.error(fail_text)
 
         if missing_count > 0:
             for filename in results['missing']:
                 # Always show missing files (problems)
-                logger.warning(f"  MISS {filename}")
+                if color_formatter:
+                    miss_text = f" {color_formatter.warning('MISS')} {color_formatter.filename(filename)}"
+                else:
+                    miss_text = f" MISS {filename}"
+                logger.warning(miss_text)
 
         if extra_count > 0:
             for filename in results['extra']:
                 # Always show extra files (problems)
-                logger.warning(f"  EXTRA {filename}")
+                if color_formatter:
+                    extra_text = f" {color_formatter.extra('EXTRA')} {color_formatter.filename(filename)}"
+                else:
+                    extra_text = f" EXTRA {filename}"
+                logger.warning(extra_text)
 
-        # Summary line
-        if failed_count == 0 and missing_count == 0:
-            status = "OK"
-            if dazzle_logger:
-                dazzle_logger.info(f"{status} {path}: {verified_count} verified, "
-                                 f"{failed_count} failed, {missing_count} missing, {extra_count} extra", level=0)
-            else:
-                logger.info(f"{status} {path}: {verified_count} verified, "
-                           f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
+        # Calculate intelligent status with percentages
+        status_text, exit_code, success_pct, failure_pct = calculate_verification_status(
+            verified_count, failed_count, missing_count, extra_count
+        )
+        
+        # Apply colors to the status text
+        colored_status = format_status_with_colors(status_text, success_pct, failure_pct)
+        
+        # Format count details with colors and bold numbers
+        if color_formatter:
+            verified_text = f"{color_formatter.bold_number(verified_count)} {color_formatter.success('verified')}"
+            failed_text = f"{color_formatter.bold_number(failed_count)} {color_formatter.error('failed')}"
+            missing_text = f"{color_formatter.bold_number(missing_count)} {color_formatter.warning('missing')}"
+            extra_text = f"{color_formatter.bold_number(extra_count)} {color_formatter.extra('extra')}"
         else:
-            status = "FAIL"
+            verified_text = f"{verified_count} verified"
+            failed_text = f"{failed_count} failed"
+            missing_text = f"{missing_count} missing"
+            extra_text = f"{extra_count} extra"
+
+        # Build complete summary line
+        summary = f"{colored_status} {path}: {verified_text}, {failed_text}, {missing_text}, {extra_text}"
+        
+        # Log with appropriate level based on severity
+        if exit_code <= 2:  # Perfect or almost perfect
             if dazzle_logger:
-                dazzle_logger.error(f"{status} {path}: {verified_count} verified, "
-                                  f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
+                dazzle_logger.info(summary, level=0)
             else:
-                logger.error(f"{status} {path}: {verified_count} verified, "
-                           f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
+                logger.info(summary)
+        else:  # Has issues
+            if dazzle_logger:
+                dazzle_logger.error(summary)
+            else:
+                logger.error(summary)
+        
+        # Store exit code for main function to return
+        # We'll add this to a global variable or pass it through the call stack
+        global verification_exit_code
+        verification_exit_code = exit_code
 
 
 class DetailedHelpAction(argparse.Action):
@@ -2452,6 +2669,10 @@ def create_parent_parser():
                        help='Increase verbosity (-v, -vv, -vvv)')
     parent.add_argument('--quiet', action='store_true',
                        help='Suppress non-error output')
+    parent.add_argument('--no-color', action='store_true',
+                       help='Disable colored output')
+    parent.add_argument('--show-log-types', action='store_true',
+                       help='Show log type prefixes (INFO, ERROR, WARNING)')
     parent.add_argument('--algorithm', choices=SUPPORTED_ALGORITHMS,
                        default=DEFAULT_ALGORITHM, help=f'Hash algorithm (default: {DEFAULT_ALGORITHM})')
     parent.add_argument('--shadow-dir', metavar='DIR',
@@ -2533,8 +2754,11 @@ For comprehensive examples: %(prog)s examples
                                          description='Verify file integrity against existing checksums')
     verify_parser.add_argument('--show-all-verifications', action='store_true',
                               help='Show all verification results, not just failures')
-    verify_parser.add_argument('--output', metavar='FILE',
+    verify_parser.add_argument('--checksum-file', metavar='FILE',
                               help='Monolithic checksum file to verify against')
+    # Keep --output for backwards compatibility with deprecation warning
+    verify_parser.add_argument('--output', metavar='FILE', dest='checksum_file',
+                              help=argparse.SUPPRESS)  # Hidden deprecated option
     verify_parser.add_argument('--log', metavar='FILE',
                               help='Write detailed log to file')
     
@@ -2588,6 +2812,7 @@ Common Options (available for all commands):
                         Line ending handling strategy
   -v, --verbose         Increase verbosity (-v, -vv, -vvv)
   --quiet               Suppress non-error output
+  --no-color            Disable colored output
   --force-python        Force Python implementation (skip native tools)
   -y, --yes             Answer yes to all prompts
 
@@ -2860,6 +3085,19 @@ def handle_create_command(args):
 
 def handle_verify_command(args):
     """Handle verify subcommand."""
+    # Auto-detect verification mode if no checksum file specified
+    output_file = getattr(args, 'checksum_file', None)
+    if not output_file:
+        # Use context detection to find appropriate checksum file
+        directory = Path(args.directory).resolve()
+        detected_file = auto_detect_checksum_file(directory)
+        if detected_file and is_monolithic_file(detected_file):
+            output_file = str(detected_file)
+            if dazzle_logger:
+                dazzle_logger.info(f"Auto-detected monolithic checksum file: {detected_file}", level=1)
+            else:
+                logger.info(f"Auto-detected monolithic checksum file: {detected_file}")
+    
     # Set up generator for verify mode
     generator = ChecksumGenerator(
         algorithm=args.algorithm,
@@ -2868,8 +3106,8 @@ def handle_verify_command(args):
         log_file=getattr(args, 'log', None),
         summary_mode=False,  # Verify mode doesn't use summary
         generate_individual=True,  # Verify needs to read individual files
-        generate_monolithic=bool(getattr(args, 'output', None)),
-        output_file=getattr(args, 'output', None),
+        generate_monolithic=bool(output_file),
+        output_file=output_file,
         show_all_verifications=getattr(args, 'show_all_verifications', False),
         shadow_dir=args.shadow_dir
     )
@@ -2996,17 +3234,29 @@ def execute_create_action(args, directory):
 
 def execute_verify_action(args, directory):
     """Execute verify action."""
+    # Auto-detect verification mode if no checksum file specified
+    output_file = getattr(args, 'checksum_file', None)
+    if not output_file:
+        # Use context detection to find appropriate checksum file
+        detected_file = auto_detect_checksum_file(directory)
+        if detected_file and is_monolithic_file(detected_file):
+            output_file = str(detected_file)
+            if dazzle_logger:
+                dazzle_logger.info(f"Auto-detected monolithic checksum file: {detected_file}", level=1)
+            else:
+                logger.info(f"Auto-detected monolithic checksum file: {detected_file}")
+    
     # Set up generator for verify mode
     generator = ChecksumGenerator(
         algorithm=args.algorithm,
         line_ending_strategy=args.line_endings,
         follow_symlinks=args.follow_symlinks,
-        log_file=args.log,
+        log_file=getattr(args, 'log', None),
         summary_mode=False,  # Verify mode doesn't use summary
         generate_individual=True,  # Verify needs to read individual files
-        generate_monolithic=bool(args.output),
-        output_file=args.output,
-        show_all_verifications=args.show_all_verifications,
+        generate_monolithic=bool(output_file),
+        output_file=output_file,
+        show_all_verifications=getattr(args, 'show_all_verifications', False),
         shadow_dir=args.shadow_dir
     )
     
@@ -3084,7 +3334,7 @@ def execute_manage_action(args, directory):
     
     return 1
 
-def setup_logging(verbosity=0, quiet=False):
+def setup_logging(verbosity=0, quiet=False, show_log_types=None):
     """Configure logging based on verbosity settings."""
     if quiet:
         level = logging.WARNING
@@ -3096,13 +3346,28 @@ def setup_logging(verbosity=0, quiet=False):
     # Configure root logger
     logging.getLogger().setLevel(level)
 
-    # Create a more detailed formatter for debug mode
+    # Determine if we should show log type prefixes
+    # Priority: explicit parameter > environment variable > verbosity-based default
+    if show_log_types is not None:
+        use_log_types = show_log_types
+    elif os.environ.get('DAZZLESUM_SHOW_LOG_TYPES', '').lower() in ('1', 'true', 'yes'):
+        use_log_types = True
+    else:
+        # Clean output by default (verbosity 0), show log types for higher verbosity
+        use_log_types = verbosity >= 1
+
+    # Create formatter based on verbosity and log type preferences
     if verbosity >= 3:
+        # Debug mode: full details including timestamps
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
         )
-    else:
+    elif use_log_types:
+        # Normal mode with log type prefixes
         formatter = logging.Formatter('%(levelname)s - %(message)s')
+    else:
+        # Clean mode: just the message
+        formatter = logging.Formatter('%(message)s')
 
     # Update handler formatter
     for handler in logging.getLogger().handlers:
@@ -3110,19 +3375,148 @@ def setup_logging(verbosity=0, quiet=False):
         handler.setLevel(level)
 
 
+def auto_detect_checksum_file(directory_path):
+    """Auto-detect the most appropriate checksum file in a directory.
+    
+    Returns:
+        Path: Path to the detected checksum file, or None if none found
+    """
+    try:
+        directory = Path(directory_path).resolve()
+        if not directory.is_dir():
+            return None
+            
+        # Priority 1: Check for individual .shasum files
+        shasum_file = directory / SHASUM_FILENAME
+        if shasum_file.exists():
+            return shasum_file
+            
+        # Priority 2: Check for common monolithic checksum file patterns
+        checksum_patterns = [
+            f'checksums.{alg}' for alg in SUPPORTED_ALGORITHMS
+        ] + [
+            'checksums',
+            'CHECKSUMS', 
+            'SHA256SUMS', 
+            'MD5SUMS',
+            'SHA1SUMS',
+            'SHA512SUMS'
+        ]
+        
+        for pattern in checksum_patterns:
+            potential_file = directory / pattern
+            if potential_file.exists() and potential_file.is_file():
+                # Use existing is_monolithic_file function to verify it's actually a checksum file
+                if is_monolithic_file(potential_file):
+                    return potential_file
+                    
+        # Priority 3: Check for any other files that might be monolithic checksum files
+        # Look for common checksum file extensions
+        for file_path in directory.iterdir():
+            if file_path.is_file():
+                name = file_path.name.lower()
+                # Check files with common checksum extensions
+                if (name.endswith(('.sha256', '.sha1', '.sha512', '.md5')) or 
+                    'checksum' in name or 'hash' in name):
+                    if is_monolithic_file(file_path):
+                        return file_path
+                        
+    except Exception:
+        pass
+    return None
+
 def detect_context_command(directory_path='.'):
     """Detect the appropriate command based on existing files in directory.
     
     Returns:
-        str: 'verify' if .shasum files exist, 'create' otherwise
+        str: 'verify' if .shasum files or monolithic checksum files exist, 'create' otherwise
     """
-    try:
-        directory = Path(directory_path).resolve()
-        if directory.is_dir() and (directory / SHASUM_FILENAME).exists():
-            return 'verify'
-    except Exception:
-        pass
-    return 'create'
+    detected_file = auto_detect_checksum_file(directory_path)
+    return 'verify' if detected_file else 'create'
+
+
+def calculate_verification_status(verified_count, failed_count, missing_count, extra_count):
+    """Calculate status label and exit code based on verification results.
+    
+    Args:
+        verified_count: Number of files that verified successfully
+        failed_count: Number of files that failed checksum verification
+        missing_count: Number of missing files
+        extra_count: Number of extra files found
+        
+    Returns:
+        tuple: (status_label, exit_code, success_percentage, failure_percentage)
+    """
+    total_expected = verified_count + failed_count + missing_count
+    
+    # Handle edge case where no files were expected
+    if total_expected == 0:
+        if extra_count > 0:
+            return "0%/100% UNEXPECTED FILES", 4, 0, 100
+        else:
+            return "100%/0% SUCCESS", 0, 100, 0
+    
+    # Calculate success/failure percentages
+    # Consider missing and failed files as failures
+    failure_count = failed_count + missing_count
+    success_percentage = round((verified_count / total_expected) * 100)
+    failure_percentage = round((failure_count / total_expected) * 100)
+    
+    # Determine status label and exit code based on success rate
+    if success_percentage == 100:
+        status_label = "SUCCESS"
+        exit_code = 0
+    elif success_percentage >= 99:
+        status_label = "ALMOST PERFECT"
+        exit_code = 2
+    elif success_percentage >= 95:
+        status_label = "SOME ISSUES"
+        exit_code = 3
+    elif success_percentage >= 80:
+        status_label = "FAILS"
+        exit_code = 4
+    elif success_percentage >= 50:
+        status_label = "MANY FAILS"
+        exit_code = 5
+    elif success_percentage > 0:
+        status_label = "MOSTLY FAILS"
+        exit_code = 6
+    else:
+        status_label = "FAILURE"
+        exit_code = 7
+    
+    return f"{success_percentage}%/{failure_percentage}% {status_label}", exit_code, success_percentage, failure_percentage
+
+
+def format_status_with_colors(status_text, success_percentage, failure_percentage):
+    """Apply colors to status text with green success % and red failure %.
+    
+    Args:
+        status_text: Full status text like "99%/1% ALMOST PERFECT"
+        success_percentage: Success percentage (0-100)
+        failure_percentage: Failure percentage (0-100)
+        
+    Returns:
+        Colored status text if colors enabled, otherwise plain text
+    """
+    if not color_formatter or not color_formatter.use_colors:
+        return status_text
+    
+    # Split the status text to colorize percentages
+    parts = status_text.split('%')
+    if len(parts) >= 3:
+        # Format: "99%/1% STATUS"
+        success_part = f"{parts[0]}%"
+        failure_part = f"{parts[1].split('/')[1]}%"
+        status_label = parts[2]
+        
+        colored_success = color_formatter.success(success_part)
+        colored_failure = color_formatter.error(failure_part)
+        
+        return f"{colored_success}/{colored_failure}{status_label}"
+    
+    # Fallback to original text if parsing fails
+    return status_text
 
 def main():
     """Main entry point with subcommand handling and context detection."""
@@ -3149,8 +3543,30 @@ def main():
             sys.argv.extend([detected_command, '.'])
             logger.info(f"Context-aware: executing '{detected_command} .'")
             if detected_command == 'verify':
-                # Add --show-all-verifications for better default verify behavior
-                sys.argv.append('--show-all-verifications')
+                # Smart default: only show all verifications for small datasets
+                # For large monolithic files, use compact format
+                detected_file = auto_detect_checksum_file('.')
+                if detected_file and is_monolithic_file(detected_file):
+                    # Count entries in monolithic file to decide format
+                    try:
+                        with open(detected_file, 'r', encoding='utf-8') as f:
+                            entry_count = 0
+                            for line in f:
+                                line = line.strip()
+                                if line and not line.startswith('#'):
+                                    entry_count += 1
+                                    if entry_count > 50:  # Stop counting after threshold
+                                        break
+                        
+                        # Only add --show-all-verifications for small datasets
+                        if entry_count <= 50:
+                            sys.argv.append('--show-all-verifications')
+                    except Exception:
+                        # If we can't read the file, default to compact format
+                        pass
+                else:
+                    # For individual .shasum files, always show all verifications
+                    sys.argv.append('--show-all-verifications')
         
         # Parse arguments normally
         args = parser.parse_args()
@@ -3158,12 +3574,12 @@ def main():
         # Check if we have a command
         if not hasattr(args, 'command') or args.command is None:
             parser.print_help()
-            return 1
+            return 1  # Informational
             
         # Handle help topics that set help_topic attribute
         if hasattr(args, 'help_topic'):
             show_detailed_help(args.help_topic)
-            return 0
+            return 1  # Informational
         
         # Validate directory early
         directory = Path(args.directory).resolve()
@@ -3189,13 +3605,20 @@ def main():
                 return 1
         
         # Set up logging and global state
-        setup_logging(args.verbose, args.quiet or (args.command == 'create' and args.summary))
-        global dazzle_logger
+        # Only pass show_log_types if explicitly set, otherwise let setup_logging decide based on verbosity
+        show_log_types = getattr(args, 'show_log_types', False) if hasattr(args, 'show_log_types') and args.show_log_types else None
+        setup_logging(args.verbose, args.quiet or (args.command == 'create' and args.summary), show_log_types)
+        global dazzle_logger, color_formatter
         dazzle_logger = DazzleLogger(
             verbosity=args.verbose,
             quiet=args.quiet,
-            summary_mode=(args.command == 'create' and args.summary)
+            summary_mode=(args.command == 'create' and args.summary),
+            show_log_types=show_log_types
         )
+        
+        # Initialize color formatter
+        use_colors = None if not getattr(args, 'no_color', False) else False
+        color_formatter = ColorFormatter(use_colors=use_colors)
         
         # Log startup info
         dazzle_logger.info(f"Dazzle Checksum Tool v{__version__}", level=0)
@@ -3207,7 +3630,15 @@ def main():
             dazzle_logger.debug(f"is_windows(): {is_windows()}")
         
         # Execute the appropriate action based on command
-        return execute_main_action(args, args.command)
+        global verification_exit_code
+        verification_exit_code = 0  # Reset for each run
+        result = execute_main_action(args, args.command)
+        
+        # For verification commands, return the calculated exit code
+        if args.command == 'verify' and verification_exit_code > 0:
+            return verification_exit_code
+        
+        return result
         
     except KeyboardInterrupt:
         print()
