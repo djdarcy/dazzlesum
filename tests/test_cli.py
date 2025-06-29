@@ -205,12 +205,15 @@ class TestCLIInterface(unittest.TestCase):
     
     def test_argument_validation(self):
         """Test argument validation for different subcommands."""
-        # Test monolithic mode without recursive flag
-        result = self.run_dazzlesum([
+        # Test monolithic mode without recursive flag shows interactive prompt
+        result = subprocess.run([
+            sys.executable, str(self.script_path),
             "create", "--mode", "monolithic", str(self.test_dir)
-        ], expect_success=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Monolithic modes require --recursive", result.stderr)
+        ], input="n\n", capture_output=True, text=True)
+        
+        self.assertEqual(result.returncode, 0)  # User chose to cancel, not an error
+        self.assertIn("Monolithic mode works by creating a single checksum file", result.stdout)
+        self.assertIn("Operation cancelled", result.stdout)
 
 
 if __name__ == '__main__':

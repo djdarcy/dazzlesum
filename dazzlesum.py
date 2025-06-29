@@ -49,7 +49,7 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 MAJOR, MINOR, PATCH = 1, 3, 4
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.4_47-20250629-be010be8"
+__version__ = "1.3.4_48-20250629-aff0435b"
 
 def get_package_version():
     """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
@@ -936,7 +936,7 @@ class ShasumManager:
 class MonolithicWriter:
     """Handles streaming writes to monolithic checksum files."""
 
-    def __init__(self, output_path: Path, root_path: Path, algorithm: str, resume_mode=False):
+    def __init__(self, output_path: Path, root_path: Path, algorithm: str, resume_mode=False, yes_to_all=False):
         self.output_path = Path(output_path)
         self.temp_path = Path(str(output_path) + '.tmp')
         self.root_path = Path(root_path)
@@ -946,6 +946,7 @@ class MonolithicWriter:
         self._is_open = False
         self._last_progress_report = 0
         self.resume_mode = resume_mode
+        self.yes_to_all = yes_to_all
 
     def __enter__(self):
         """Context manager entry."""
@@ -966,6 +967,12 @@ class MonolithicWriter:
         try:
             # Ensure output directory exists
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Check for existing file (but not in resume mode - that's handled separately)
+            if not self.resume_mode and self.output_path.exists():
+                if not self._check_overwrite_permission():
+                    print("Operation cancelled.")
+                    raise KeyboardInterrupt("User cancelled overwrite operation")
 
             if self.resume_mode and self.output_path.exists():
                 # Resume mode: copy existing file to temp and append
@@ -1057,8 +1064,8 @@ class MonolithicWriter:
                 self.file_handle = None
 
             if success and self.temp_path.exists():
-                # Atomic rename to final location
-                os.rename(self.temp_path, self.output_path)
+                # Cross-platform atomic replacement
+                self._atomic_replace(self.temp_path, self.output_path)
                 logger.info(f"Wrote {self.entries_written} checksums to monolithic file: {self.output_path}")
             else:
                 # Cleanup temp file on failure
@@ -1078,6 +1085,90 @@ class MonolithicWriter:
                 os.remove(self.temp_path)
         except Exception as e:
             logger.warning(f"Could not remove temp file {self.temp_path}: {e}")
+
+    def _atomic_replace(self, src: Path, dst: Path):
+        """Cross-platform atomic file replacement."""
+        if is_windows():
+            # Windows: requires removing target first
+            if dst.exists():
+                backup_path = dst.with_suffix(dst.suffix + '.bak')
+                # Remove any existing backup
+                if backup_path.exists():
+                    backup_path.unlink()
+                # Move current file to backup
+                dst.rename(backup_path)
+                try:
+                    # Move temp file to final location
+                    src.rename(dst)
+                    # Remove backup on success
+                    backup_path.unlink()
+                except Exception:
+                    # Restore backup on failure
+                    if backup_path.exists():
+                        backup_path.rename(dst)
+                    raise
+            else:
+                # No existing file, simple rename
+                src.rename(dst)
+        else:
+            # Unix: atomic rename (overwrites existing file)
+            src.rename(dst)
+
+    def _check_overwrite_permission(self) -> bool:
+        """Check if user wants to overwrite existing monolithic file."""
+        # Auto-accept if --yes flag was used
+        if self.yes_to_all:
+            print(f"Overwriting existing file: {self.output_path.name}")
+            return True
+        
+        # Get file info
+        try:
+            stat_info = self.output_path.stat()
+            file_size = stat_info.st_size
+            mod_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stat_info.st_mtime))
+            
+            # Count entries (quick check)
+            entry_count = 0
+            try:
+                with open(self.output_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip() and not line.startswith('#') and '  ' in line:
+                            entry_count += 1
+            except Exception:
+                entry_count = "unknown"
+            
+        except Exception:
+            file_size = 0
+            mod_time = "unknown"
+            entry_count = "unknown"
+        
+        # Show file information and prompt
+        print(f"\nFile '{self.output_path.name}' already exists:")
+        if entry_count != "unknown":
+            print(f"  Entries: {entry_count:,}")
+        if file_size > 0:
+            print(f"  Size: {self._format_size(file_size)}")
+        print(f"  Modified: {mod_time}")
+        
+        print(f"\nAlternatives:")
+        print(f"  - Use 'dazzlesum update -r .' for incremental updates")
+        print(f"  - Use 'dazzlesum create -r --output different-name.{self.algorithm}' for different filename")
+        print(f"  - Use '-y' flag to auto-overwrite in scripts")
+        
+        try:
+            response = input(f"\nOverwrite '{self.output_path.name}'? (y/N): ").strip().lower()
+            return response in ['y', 'yes']
+        except (KeyboardInterrupt, EOFError):
+            print("\nOperation cancelled.")
+            return False
+
+    def _format_size(self, bytes_count: int) -> str:
+        """Format bytes in human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes_count < 1024:
+                return f"{bytes_count:.1f} {unit}"
+            bytes_count /= 1024
+        return f"{bytes_count:.1f} TB"
 
 
 class ProgressTracker:
@@ -1934,7 +2025,7 @@ class ChecksumGenerator:
                  include_patterns=None, exclude_patterns=None, follow_symlinks=False,
                  log_file=None, summary_mode=False, generate_individual=True,
                  generate_monolithic=False, output_file=None, show_all_verifications=False,
-                 shadow_dir=None, resume_mode=False):
+                 shadow_dir=None, resume_mode=False, yes_to_all=False):
         self.algorithm = algorithm.lower()
         self.calculator = DazzleHashCalculator(algorithm, line_ending_strategy)
         self.include_patterns = include_patterns or []
@@ -1956,6 +2047,7 @@ class ChecksumGenerator:
         self.output_file = output_file
         self.show_all_verifications = show_all_verifications
         self.resume_mode = resume_mode
+        self.yes_to_all = yes_to_all
         self.summary_collector = SummaryCollector()
         self.progress_tracker = None
         
@@ -2450,7 +2542,7 @@ class ChecksumGenerator:
                 ext = f".{self.algorithm}"
                 output_path = root_directory / f"{MONOLITHIC_DEFAULT_NAME}{ext}"
 
-            monolithic_writer = MonolithicWriter(output_path, root_directory, self.algorithm, self.resume_mode)
+            monolithic_writer = MonolithicWriter(output_path, root_directory, self.algorithm, self.resume_mode, self.yes_to_all)
 
         walker = FIFODirectoryWalker(self.follow_symlinks)
 
@@ -3703,7 +3795,8 @@ def handle_create_command(args):
         generate_monolithic=generate_monolithic,
         output_file=getattr(args, 'output', None),
         shadow_dir=args.shadow_dir,
-        resume_mode=getattr(args, 'resume', False)
+        resume_mode=getattr(args, 'resume', False),
+        yes_to_all=args.yes
     )
     
     # Force Python implementation if requested
@@ -3751,7 +3844,8 @@ def handle_verify_command(args):
         generate_monolithic=bool(output_file),
         output_file=output_file,
         show_all_verifications=getattr(args, 'show_all_verifications', False) or getattr(args, 'show_all', False),
-        shadow_dir=args.shadow_dir
+        shadow_dir=args.shadow_dir,
+        yes_to_all=args.yes
     )
     
     # Force Python implementation if requested
@@ -3793,7 +3887,8 @@ def handle_update_command(args):
         summary_mode=False,
         generate_individual=True,  # Update implies individual files
         generate_monolithic=False,  # Update typically doesn't use monolithic
-        shadow_dir=args.shadow_dir
+        shadow_dir=args.shadow_dir,
+        yes_to_all=args.yes
     )
     
     # Force Python implementation if requested
@@ -3869,7 +3964,8 @@ def execute_create_action(args, directory):
         generate_monolithic=generate_monolithic,
         output_file=args.output,
         shadow_dir=args.shadow_dir,
-        resume_mode=args.resume
+        resume_mode=args.resume,
+        yes_to_all=args.yes
     )
     
     # Force Python implementation if requested
@@ -3915,7 +4011,8 @@ def execute_verify_action(args, directory):
         generate_monolithic=bool(output_file),
         output_file=output_file,
         show_all_verifications=getattr(args, 'show_all_verifications', False) or getattr(args, 'show_all', False),
-        shadow_dir=args.shadow_dir
+        shadow_dir=args.shadow_dir,
+        yes_to_all=args.yes
     )
     
     # Force Python implementation if requested
@@ -3956,7 +4053,8 @@ def execute_update_action(args, directory):
         summary_mode=False,
         generate_individual=True,  # Update implies individual files
         generate_monolithic=False,  # Update typically doesn't use monolithic
-        shadow_dir=args.shadow_dir
+        shadow_dir=args.shadow_dir,
+        yes_to_all=args.yes
     )
     
     # Force Python implementation if requested
