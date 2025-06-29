@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test runner with strict mode support
+# Test runner with strict mode support - matches CI test runner
 
 STRICT_MODE=false
 if [[ "$1" == "--strict" ]]; then
@@ -7,7 +7,7 @@ if [[ "$1" == "--strict" ]]; then
 fi
 
 echo "Running unit tests..."
-if python3 -m pytest tests/ --quiet; then
+if python3 tests/run_tests.py --unit; then
     echo "✅ All tests passed!"
     exit 0
 else
