@@ -1,0 +1,1 @@
+# Test POSIX hook compatibility
