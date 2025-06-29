@@ -223,3 +223,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
 ---
 
 Made with ️☕ for reliable, consistent data integrity verification across all platforms.
+# Testing static versioning hook
