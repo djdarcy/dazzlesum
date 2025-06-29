@@ -90,6 +90,7 @@ class DazzleLogger:
         self.quiet = quiet
         self.summary_mode = summary_mode
         self.last_was_directory = False
+        self.verbosity_config = None  # Will be set by set_verbosity_config
         
         # Determine if we should show log type prefixes
         # Priority: explicit parameter > environment variable > verbosity-based default
@@ -100,6 +101,13 @@ class DazzleLogger:
         else:
             # Clean output by default (verbosity 0), show log types for higher verbosity
             self.show_log_types = verbosity >= 1
+
+    def set_verbosity_config(self, verbosity_config):
+        """Update logger with new verbosity configuration."""
+        self.verbosity_config = verbosity_config
+        # Update show_log_types based on verbosity config
+        if self.verbosity_config:
+            self.show_log_types = self.verbosity_config.should_show_log_types()
 
     def _should_log(self, level):
         """Check if we should log at this verbosity level."""
@@ -135,6 +143,10 @@ class DazzleLogger:
 
     def info(self, msg, level=1):
         """Info messages with verbosity level."""
+        # Check for silent mode first
+        if self.verbosity_config and self.verbosity_config.is_silent():
+            return  # No output at all in silent mode
+            
         if self._should_log(level):
             if color_formatter and level == 0:
                 # Only colorize level 0 info messages (important info)
@@ -373,6 +385,107 @@ color_formatter = None
 # Global exit code for verification operations - will be set by verification results
 verification_exit_code = 0
 
+# Global verbosity configuration instance
+verbosity_config = None
+
+
+class VerbosityConfig:
+    """Handles verbosity level configuration and environment variables."""
+    
+    def __init__(self, level=0, quiet_count=0, verbose_count=0):
+        self.level = level
+        self.quiet_count = quiet_count
+        self.verbose_count = verbose_count
+    
+    @classmethod
+    def from_environment(cls):
+        """Create config from environment variables."""
+        env_verbosity = os.environ.get('DAZZLESUM_VERBOSITY')
+        if env_verbosity:
+            try:
+                level = int(env_verbosity)
+                # Clamp to reasonable range
+                level = max(-5, min(4, level))
+                return cls(level=level)
+            except ValueError:
+                # Invalid value, use default
+                pass
+        return cls()
+    
+    @classmethod
+    def from_args(cls, args):
+        """Create config from command line arguments."""
+        quiet_count = getattr(args, 'quiet', 0)
+        verbose_count = getattr(args, 'verbose', 0)
+        
+        # Handle explicit --verbosity flag
+        if hasattr(args, 'verbosity') and args.verbosity is not None:
+            level = max(-5, min(4, args.verbosity))
+            return cls(level=level, quiet_count=quiet_count, verbose_count=verbose_count)
+        
+        # Calculate level from -q/-v counts: base + verbose - quiet
+        level = verbose_count - quiet_count
+        level = max(-5, min(4, level))  # Clamp to valid range
+        
+        return cls(level=level, quiet_count=quiet_count, verbose_count=verbose_count)
+    
+    def get_effective_level(self):
+        """Calculate final verbosity level."""
+        return self.level
+    
+    def get_squelch_settings(self):
+        """Map verbosity level to squelch configuration."""
+        # Note: True means squelched (hidden), False means shown
+        VERBOSITY_SQUELCH_MAP = {
+            -6: {'show_output': False},  # Special case: no output at all, only exit codes
+            -5: {'INFO': True,  'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': True},   # Only grand total summary
+            -4: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': False, 'FORCE_SUMMARY': True},  # info/status line + grand total
+            -3: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': False, 'SUMMARY': False},  # FAIL + info/status + grand total
+            -2: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # MISSING + FAIL + info/status + grand total
+            -1: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},  # EXTRA + MISSING + FAIL + info/status + grand total
+             0: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Current default
+            +1: {'INFO': False, 'SUCCESS': False, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Show everything
+            # +2 and above: controlled by logger verbosity, not squelch
+        }
+        
+        return VERBOSITY_SQUELCH_MAP.get(self.level, VERBOSITY_SQUELCH_MAP[0])
+    
+    def should_show_log_types(self):
+        """Determine if log type prefixes should be shown."""
+        # Check explicit environment variable first
+        env_show_types = os.environ.get('DAZZLESUM_SHOW_LOG_TYPES', '').lower()
+        if env_show_types in ('1', 'true', 'yes'):
+            return True
+        
+        # For debug levels (+2 and above), show log types by default
+        return self.level >= 2
+    
+    def is_silent(self):
+        """Check if we're in silent mode (-6)."""
+        return self.level <= -6
+
+
+def initialize_squelch_from_verbosity(verbosity_level):
+    """Set global squelch_settings based on verbosity level."""
+    global squelch_settings
+    
+    if verbosity_config:
+        squelch_settings = verbosity_config.get_squelch_settings()
+    else:
+        # Fallback if verbosity_config not available
+        # Note: True means squelched (hidden), False means shown
+        VERBOSITY_SQUELCH_MAP = {
+            -6: {'show_output': False},
+            -5: {'INFO': True,  'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': True},
+            -4: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': False, 'FORCE_SUMMARY': True},
+            -3: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': False, 'SUMMARY': False},
+            -2: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': False, 'FAILS': False, 'SUMMARY': False},
+            -1: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},
+             0: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},
+            +1: {'INFO': False, 'SUCCESS': False, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},
+        }
+        squelch_settings = VERBOSITY_SQUELCH_MAP.get(verbosity_level, VERBOSITY_SQUELCH_MAP[0])
+
 
 class GrandTotals:
     """Aggregate statistics across multiple directory verifications."""
@@ -473,7 +586,12 @@ class GrandTotals:
     
     def display_grand_totals(self):
         """Display the grand totals summary."""
+        global verbosity_config
         if not dazzle_logger:
+            return
+            
+        # Check if we're in silent mode - no output at all
+        if verbosity_config and verbosity_config.is_silent():
             return
         
         # Calculate overall statistics
@@ -569,13 +687,8 @@ class GrandTotals:
 # Global grand totals instance for recursive operations
 grand_totals = None
 
-# Global squelch settings for output filtering
-squelch_settings = {
-    'SUCCESS': False,      # Hide successful directories by default  
-    'NO_SHASUM': False,    # Show "No .shasum file found" by default
-    'INFO': False,         # Show info messages by default
-    'show_all': False      # Legacy behavior flag
-}
+# Global squelch settings for output filtering (initialized by verbosity system)
+squelch_settings = None
 
 
 class ShasumManager:
@@ -2388,7 +2501,9 @@ class ChecksumGenerator:
         # Display grand totals for recursive verification
         if verify_only and recursive and grand_totals:
             grand_totals.end_timing()
-            grand_totals.display_grand_totals()
+            # Check for silent mode (-6) - no output at all
+            if not (verbosity_config and verbosity_config.is_silent()):
+                grand_totals.display_grand_totals()
 
         # Print summary if in summary mode
         if self.summary_mode:
@@ -2396,7 +2511,21 @@ class ChecksumGenerator:
 
     def _print_verification_results(self, path: Path, results: Dict[str, Any], show_all=False):
         """Print verification results for a directory or monolithic file."""
-        global squelch_settings
+        global squelch_settings, verbosity_config
+        
+        # Check for silent mode first - no output at all
+        if verbosity_config and verbosity_config.is_silent():
+            # Still add to grand totals if tracking, but no output
+            if grand_totals:
+                grand_totals.add_directory_result(results)
+            return
+        
+        # Check for ultra-quiet modes - only grand totals and maybe summary
+        if verbosity_config and verbosity_config.get_effective_level() <= -5:
+            # Still add to grand totals but skip all directory output
+            if grand_totals:
+                grand_totals.add_directory_result(results)
+            return
         
         if 'error' in results:
             # Check if this is a "No .shasum file found" informational message
@@ -2443,8 +2572,8 @@ class ChecksumGenerator:
                 else:
                     logger.info(f" OK {filename}")
 
-        # Always show problems
-        if failed_count > 0:
+        # Show individual failure details - check squelch settings
+        if failed_count > 0 and not (squelch_settings and squelch_settings.get('FAILS', False)):
             for item in results['failed']:
                 if isinstance(item, dict):
                     if 'error' in item:
@@ -2472,18 +2601,20 @@ class ChecksumGenerator:
                         else:
                             logger.error(fail_text)
 
-        if missing_count > 0:
+        # Show individual missing files - check squelch settings
+        if missing_count > 0 and not (squelch_settings and squelch_settings.get('MISSING', False)):
             for filename in results['missing']:
-                # Always show missing files (problems)
+                # Show missing files (problems)
                 if color_formatter:
                     miss_text = f" {color_formatter.warning('MISS')} {color_formatter.filename(filename)}"
                 else:
                     miss_text = f" MISS {filename}"
                 logger.warning(miss_text)
 
-        if extra_count > 0:
+        # Show individual extra files - check squelch settings
+        if extra_count > 0 and not (squelch_settings and squelch_settings.get('EXTRA', False)):
             for filename in results['extra']:
-                # Always show extra files (problems)
+                # Show extra files
                 # In quiet mode, show directory context for EXTRA files
                 if dazzle_logger and dazzle_logger.quiet:
                     if color_formatter:
@@ -2524,14 +2655,45 @@ class ChecksumGenerator:
         should_display = True
         
         if squelch_settings:
-            # Check if this is a SUCCESS message that should be squelched
-            if exit_code == 0 and squelch_settings.get('SUCCESS', False):
-                # This is a perfect success and SUCCESS is squelched
+            # Check if FORCE_SUMMARY is set - this overrides hiding logic but respects category filtering
+            if squelch_settings.get('FORCE_SUMMARY', False):
+                # FORCE_SUMMARY overrides visibility hiding but respects category filtering
+                # Category filtering takes absolute priority - check independently
+                should_display = True  # Default to force display
+                
+                # Check SUCCESS squelching first (highest priority)
+                # SUCCESS includes both exit_code=0 (perfect) and exit_code=2 (with extras)
+                if 'SUCCESS' in status_text and squelch_settings.get('SUCCESS', False):
+                    should_display = False  # SUCCESS always squelched when SUCCESS=True
+                
+                # Check pure EXTRA-only squelching (if not already squelched by SUCCESS)
+                if should_display and (extra_count > 0 and failed_count == 0 and missing_count == 0 and verified_count == 0 and squelch_settings.get('EXTRA', False)):
+                    should_display = False  # Pure EXTRA-only squelched when EXTRA=True
+                
+                # Check EXTRA_SUMMARY squelching (if not already squelched)
+                if should_display and (extra_count > 0 and failed_count == 0 and missing_count == 0 and squelch_settings.get('EXTRA_SUMMARY', False)):
+                    should_display = False  # EXTRA_SUMMARY compressed display
+            # Check if SUMMARY (directory status lines) should be squelched
+            elif squelch_settings.get('SUMMARY', False):
                 should_display = False
-            
-            # Always show problems regardless of squelch settings
-            if exit_code > 2:  # Has real issues (failures, missing files)
-                should_display = True
+            # Check if this is a SUCCESS message that should be squelched
+            elif 'SUCCESS' in status_text and squelch_settings.get('SUCCESS', False):
+                # This is a SUCCESS (perfect or with extras) and SUCCESS is squelched
+                should_display = False
+            else:
+                # Check if directory has only issues that are being squelched
+                # If all the issues in this directory are squelched, don't show status line
+                has_displayed_fails = failed_count > 0 and not squelch_settings.get('FAILS', False)
+                has_displayed_missing = missing_count > 0 and not squelch_settings.get('MISSING', False)
+                has_displayed_extra = extra_count > 0 and not squelch_settings.get('EXTRA', False)
+                
+                # If directory has no displayed issues, don't show status line
+                if not has_displayed_fails and not has_displayed_missing and not has_displayed_extra and verified_count > 0:
+                    should_display = False
+                # Special case: if directory only has EXTRA files and EXTRA_SUMMARY is squelched, hide status line
+                elif (has_displayed_extra and not has_displayed_fails and not has_displayed_missing and 
+                      failed_count == 0 and missing_count == 0 and squelch_settings.get('EXTRA_SUMMARY', False)):
+                    should_display = False
         
         # Log with appropriate level based on severity
         if should_display:
@@ -2558,8 +2720,12 @@ class ChecksumGenerator:
         # In quiet mode, add spacing after directories that produce output
         if dazzle_logger and dazzle_logger.quiet:
             # Check if this directory produced any output in quiet mode
-            has_problems = failed_count > 0 or missing_count > 0 or extra_count > 0
-            showed_summary = should_display and (exit_code > 2 or exit_code == 0 and not squelch_settings.get('SUCCESS', False))
+            # Consider squelch settings when determining what constitutes "problems"
+            showed_fails = failed_count > 0 and not (squelch_settings and squelch_settings.get('FAILS', False))
+            showed_missing = missing_count > 0 and not (squelch_settings and squelch_settings.get('MISSING', False))
+            showed_extra = extra_count > 0 and not (squelch_settings and squelch_settings.get('EXTRA', False))
+            has_problems = showed_fails or showed_missing or showed_extra
+            showed_summary = should_display and (exit_code > 2 or exit_code == 0 and not (squelch_settings and squelch_settings.get('SUCCESS', False)))
             
             if has_problems or showed_summary:
                 # This directory produced output, add spacing after it
@@ -2949,6 +3115,136 @@ AUTOMATION:
         """)
 
 
+class VerbosityHelpAction(argparse.Action):
+    """Custom action to provide detailed verbosity level explanation."""
+    
+    def __call__(self, parser, namespace, values, option_string=None):
+        print("""
+Verbosity Levels Explained:
+
+ULTRA QUIET:
+  -qqqqq (-5)  Silent mode - NO output, only exit codes
+               Perfect for CI/CD systems that only need pass/fail status
+  
+  -qqqq  (-4)  Ultra quiet - only grand totals  
+               Shows final summary statistics only
+  
+  -qqq   (-3)  Very quiet - only directory summaries
+               Shows directory result lines but no individual file details
+  
+QUIET:  
+  -qq    (-2)  Quiet - hide individual failure lines, show summaries only
+               Shows directory summaries but hides individual FAIL/MISS lines
+  
+  -q     (-1)  Minimal - hide EXTRA files, show FAIL/MISS only
+               Hides EXTRA files but shows failures and missing files
+  
+NORMAL:
+         (0)   Default - hide SUCCESS, show problems (current behavior)
+               Smart defaults: shows problems but hides successful verifications
+  
+VERBOSE:
+  -v     (+1)  Informative - show all results including SUCCESS
+               Shows everything including successful verifications
+  
+  -vv    (+2)  Verbose - show file processing + all results  
+               Shows file-by-file processing details and all results
+  
+  -vvv   (+3)  Very verbose - show debug information + processing details
+               Shows debug messages and internal processing information
+  
+  -vvvv  (+4)  Ultra verbose - show all internal operations
+               Shows everything including low-level internal operations
+
+EXAMPLES:
+  dazzlesum verify -r -qq          # Only directory summaries
+  dazzlesum verify -r -q -v        # -q + -v = 0 (default level)
+  dazzlesum verify -r --verbosity=-3  # Same as -qqq
+  dazzlesum verify -r -vv          # Show file processing details
+
+ALTERNATIVE SYNTAX:
+  --verbosity=-3    Same as -qqq
+  --verbosity=2     Same as -vv
+
+ENVIRONMENT VARIABLES:
+  DAZZLESUM_VERBOSITY=-1     Set default verbosity level
+  DAZZLESUM_SHOW_LOG_TYPES=1 Force log type prefixes to show
+
+The verbosity level is calculated as: base_level + verbose_count - quiet_count
+        """)
+        parser.exit()
+
+
+def show_verbosity_help():
+    """Show verbosity help as a top-level command (dazzlesum verbosity)."""
+    print("""
+Verbosity Levels Explained:
+
+ULTRA QUIET:
+  -qqqqqq (-6)  Silent mode - NO output, only exit codes
+                Perfect for CI/CD systems that only need pass/fail status
+  
+  -qqqqq  (-5)  Only grand totals - shows final summary statistics only
+                Hides all directory output, shows only aggregate results
+  
+  -qqqq   (-4)  Only info/status lines + grand totals
+                Shows directory summaries but no individual file details
+  
+  -qqq    (-3)  Shows FAIL + info/status lines + grand totals
+                Hides EXTRA, MISSING files; shows only failures
+  
+QUIET:  
+  -qq     (-2)  Shows MISSING + FAIL + info/status lines + grand totals
+                Hides EXTRA files; shows missing files and failures
+  
+  -q      (-1)  Shows EXTRA + MISSING + FAIL + info/status lines + grand totals
+                Shows all issues; hides only pure SUCCESS summaries (compressed EXTRA output)
+  
+NORMAL:
+          (0)   Default - shows NO_SHASUM + EXTRA + MISSING + FAIL + info/status + grand totals
+                Smart defaults: shows problems and "No .shasum file found" messages
+  
+VERBOSE:
+  -v      (+1)  Shows SUCCESS + NO_SHASUM + EXTRA + MISSING + FAIL + info/status + grand totals
+                Shows everything including successful directory verifications
+  
+  -vv     (+2)  Shows file processing details + all results + log type prefixes
+                Shows file-by-file processing and internal operations
+  
+  -vvv    (+3)  Shows debug information + processing details + log type prefixes
+                Shows debug messages and detailed internal information
+  
+  -vvvv   (+4)  Shows all internal operations + debug + log type prefixes
+                Shows everything including low-level internal operations
+
+EXAMPLES:
+  dazzlesum verify -r -qq          # Only MISSING/FAIL + summaries
+  dazzlesum verify -r -q -v        # -q + -v = 0 (default level)
+  dazzlesum verify -r --verbosity=-3  # Same as -qqq
+  dazzlesum verify -r -vv          # Show file processing details
+
+ALTERNATIVE SYNTAX:
+  --verbosity=-6    Same as -qqqqqq (silent mode)
+  --verbosity=-3    Same as -qqq
+  --verbosity=2     Same as -vv
+
+FINE-GRAINED CONTROL:
+  --squelch SUCCESS,EXTRA          # Manually hide specific categories
+  --squelch EXTRA_SUMMARY          # Hide status lines for EXTRA-only directories
+
+ENVIRONMENT VARIABLES:
+  DAZZLESUM_VERBOSITY=-1     Set default verbosity level
+  DAZZLESUM_SHOW_LOG_TYPES=1 Force log type prefixes to show
+
+The verbosity level is calculated as: base_level + verbose_count - quiet_count
+
+GLOBAL APPLICATION:
+The verbosity system works across ALL commands (create, verify, update, manage),
+not just verify. Each command may interpret verbosity levels slightly differently
+based on what operations they perform.
+    """)
+
+
 def create_parent_parser():
     """Create parent parser with common arguments for all subcommands."""
     parent = argparse.ArgumentParser(add_help=False)
@@ -2961,9 +3257,11 @@ def create_parent_parser():
     parent.add_argument('-r', '--recursive', action='store_true',
                        help='Process directories recursively')
     parent.add_argument('-v', '--verbose', action='count', default=0,
-                       help='Increase verbosity (-v, -vv, -vvv)')
-    parent.add_argument('--quiet', action='store_true',
-                       help='Suppress non-error output')
+                       help='Increase verbosity (can be used multiple times: -v, -vv, -vvv, -vvvv)')
+    parent.add_argument('-q', '--quiet', action='count', default=0,
+                       help='Decrease verbosity (can be used multiple times: -q, -qq, -qqq, -qqqq, -qqqqq)')
+    parent.add_argument('--verbosity', type=int, metavar='LEVEL',
+                       help='Set verbosity level directly (-5 to +4, overrides -q/-v). Use "dazzlesum verbosity" for detailed help.')
     parent.add_argument('--no-color', action='store_true',
                        help='Disable colored output')
     parent.add_argument('--show-log-types', action='store_true',
@@ -3059,7 +3357,7 @@ For comprehensive examples: %(prog)s examples
     
     # Output control options
     verify_parser.add_argument('--squelch', metavar='CATEGORIES',
-                              help='Hide output categories: SUCCESS,NO_SHASUM,INFO (comma-separated)')
+                              help='Hide output categories: SUCCESS,NO_SHASUM,INFO,EXTRA,MISSING,FAILS,SUMMARY,EXTRA_SUMMARY (comma-separated)')
     verify_parser.add_argument('--show-all', action='store_true',
                               help='Show all results including successful verifications (legacy behavior)')
     
@@ -3566,36 +3864,14 @@ def execute_verify_action(args, directory):
         generator.calculator.native_tool = None
         logger.info("Forcing Python implementation")
     
-    # Configure squelch settings based on arguments (only for recursive verification)
+    # Squelch settings are initialized by the verbosity system
+    # Apply any explicit --squelch overrides on top of verbosity-based settings
     global squelch_settings
-    if args.recursive:
-        squelch_settings = {
-            'SUCCESS': True,       # Hide SUCCESS by default (new behavior)
-            'NO_SHASUM': False,    # Show "No .shasum file found" by default
-            'INFO': False,         # Show info messages by default
-            'show_all': False      # Legacy behavior flag
-        }
-        
-        # Handle --show-all flag (legacy behavior)
-        if getattr(args, 'show_all', False):
-            squelch_settings['show_all'] = True
-            squelch_settings['SUCCESS'] = False  # Show SUCCESS when --show-all is used
-        
-        # Handle --squelch parameter
-        if hasattr(args, 'squelch') and args.squelch:
-            squelch_categories = [cat.strip().upper() for cat in args.squelch.split(',')]
-            for category in squelch_categories:
-                if category in squelch_settings:
-                    squelch_settings[category] = True
-        
-        # Handle --quiet flag (hide everything except failures)
-        if getattr(args, 'quiet', False):
-            squelch_settings['SUCCESS'] = True
-            squelch_settings['NO_SHASUM'] = True
-            squelch_settings['INFO'] = True
-    else:
-        # For single directory verification, don't use squelch (legacy behavior)
-        squelch_settings = None
+    if hasattr(args, 'squelch') and args.squelch and squelch_settings:
+        squelch_categories = [cat.strip().upper() for cat in args.squelch.split(',')]
+        for category in squelch_categories:
+            if category in squelch_settings:
+                squelch_settings[category] = True
     
     
     # Process directory tree in verify mode
@@ -3796,9 +4072,12 @@ def calculate_verification_status(verified_count, failed_count, missing_count, e
     failure_percentage = round((failure_count / total_expected) * 100)
     
     # Determine status label and exit code based on success rate
-    if success_percentage == 100:
+    if success_percentage == 100 and extra_count == 0:
         status_label = "SUCCESS"
         exit_code = 0
+    elif success_percentage == 100 and extra_count > 0:
+        status_label = "SUCCESS"  # All expected files verified, but has extras
+        exit_code = 2  # Not perfect due to extra files
     elif success_percentage >= 99:
         status_label = "ALMOST PERFECT"
         exit_code = 2
@@ -3857,9 +4136,13 @@ def main():
         parser = create_argument_parser()
         
         # Handle help-only commands early
-        if len(sys.argv) > 1 and sys.argv[1] in ['mode', 'examples', 'shadow']:
-            show_detailed_help(sys.argv[1])
-            return 0
+        if len(sys.argv) > 1 and sys.argv[1] in ['mode', 'examples', 'shadow', 'verbosity']:
+            if sys.argv[1] == 'verbosity':
+                show_verbosity_help()
+                return 0
+            else:
+                show_detailed_help(sys.argv[1])
+                return 0
         
         # Handle default behavior with context detection
         if len(sys.argv) > 1:
@@ -3904,6 +4187,14 @@ def main():
         # Parse arguments normally
         args = parser.parse_args()
         
+        # Handle verbosity configuration early
+        global verbosity_config
+        verbosity_config = VerbosityConfig.from_environment()
+        verbosity_config = VerbosityConfig.from_args(args)
+        
+        # Initialize squelch settings from verbosity
+        initialize_squelch_from_verbosity(verbosity_config.get_effective_level())
+        
         # Check if we have a command
         if not hasattr(args, 'command') or args.command is None:
             parser.print_help()
@@ -3928,7 +4219,7 @@ def main():
             if args.summary and args.verbose > 0:
                 logger.error("Cannot use --summary and --verbose together")
                 return 1
-            if args.summary and args.quiet:
+            if args.summary and args.quiet > 0:
                 logger.error("Cannot use --summary and --quiet together")
                 return 1
             
@@ -3938,23 +4229,31 @@ def main():
                 return 1
         
         # Set up logging and global state
-        # Only pass show_log_types if explicitly set, otherwise let setup_logging decide based on verbosity
+        # Only pass show_log_types if explicitly set, otherwise let verbosity config decide
         show_log_types = getattr(args, 'show_log_types', False) if hasattr(args, 'show_log_types') and args.show_log_types else None
-        setup_logging(args.verbose, args.quiet or (args.command == 'create' and args.summary), show_log_types)
+        
+        # Use verbosity config for logging setup
+        effective_quiet = verbosity_config.get_effective_level() < 0 or (args.command == 'create' and args.summary)
+        setup_logging(args.verbose, effective_quiet, show_log_types)
+        
         global dazzle_logger, color_formatter
         dazzle_logger = DazzleLogger(
             verbosity=args.verbose,
-            quiet=args.quiet,
+            quiet=effective_quiet,
             summary_mode=(args.command == 'create' and args.summary),
-            show_log_types=show_log_types
+            show_log_types=verbosity_config.should_show_log_types() if show_log_types is None else show_log_types
         )
+        
+        # Set verbosity config in logger
+        dazzle_logger.set_verbosity_config(verbosity_config)
         
         # Initialize color formatter
         use_colors = None if not getattr(args, 'no_color', False) else False
         color_formatter = ColorFormatter(use_colors=use_colors)
         
-        # Log startup info
-        dazzle_logger.info(f"Dazzle Checksum Tool v{__version__}", level=0)
+        # Log startup info (skip in silent mode)
+        if not (verbosity_config and verbosity_config.is_silent()):
+            dazzle_logger.info(f"Dazzle Checksum Tool v{__version__}", level=0)
         
         if args.verbose >= 3:
             dazzle_logger.debug(f"Platform: {platform.platform()}")
