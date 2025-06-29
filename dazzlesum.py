@@ -49,7 +49,7 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 MAJOR, MINOR, PATCH = 1, 3, 1
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.0_36-20250629-2109774a"
+__version__ = "1.3.1_37-20250629-ae840995"
 __author__ = "Dustin Darcy"
 
 # Try to import unctools for enhanced path handling
