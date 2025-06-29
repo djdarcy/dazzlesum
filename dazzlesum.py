@@ -45,7 +45,16 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional, Union, Any
 
 # Version information
-__version__ = "1.1.0"
+# Base semantic version (manually maintained for git hooks)
+MAJOR, MINOR, PATCH = 1, 3, 5
+
+# Static version string (updated automatically by git hooks)
+__version__ = "1.3.5_16-20250627-acb773c0"
+
+def get_package_version():
+    """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
+    return f"{MAJOR}.{MINOR}.{PATCH}"
+
 __author__ = "Dustin Darcy"
 
 # Try to import unctools for enhanced path handling
@@ -85,11 +94,29 @@ logger = logging.getLogger(__name__)
 class DazzleLogger:
     """Enhanced logger with DOS-compatible verbosity levels and visual separation."""
 
-    def __init__(self, verbosity=0, quiet=False, summary_mode=False):
+    def __init__(self, verbosity=0, quiet=False, summary_mode=False, show_log_types=None):
         self.verbosity = verbosity
         self.quiet = quiet
         self.summary_mode = summary_mode
         self.last_was_directory = False
+        self.verbosity_config = None  # Will be set by set_verbosity_config
+        
+        # Determine if we should show log type prefixes
+        # Priority: explicit parameter > environment variable > verbosity-based default
+        if show_log_types is not None:
+            self.show_log_types = show_log_types
+        elif os.environ.get('DAZZLESUM_SHOW_LOG_TYPES', '').lower() in ('1', 'true', 'yes'):
+            self.show_log_types = True
+        else:
+            # Clean output by default (verbosity 0), show log types for higher verbosity
+            self.show_log_types = verbosity >= 1
+
+    def set_verbosity_config(self, verbosity_config):
+        """Update logger with new verbosity configuration."""
+        self.verbosity_config = verbosity_config
+        # Update show_log_types based on verbosity config
+        if self.verbosity_config:
+            self.show_log_types = self.verbosity_config.should_show_log_types()
 
     def _should_log(self, level):
         """Check if we should log at this verbosity level."""
@@ -101,21 +128,45 @@ class DazzleLogger:
 
     def _add_spacing_if_needed(self):
         """Add blank line for directory separation."""
+        # Don't add spacing in summary mode as it interferes with progress bar
+        if self.summary_mode:
+            return
         if self.last_was_directory and self._should_log(1):
             print()
 
     def error(self, msg):
         """Always show errors."""
+        if color_formatter:
+            # Only colorize if message doesn't already have color codes
+            if '\033[' not in msg:
+                msg = color_formatter.error(msg)
         logger.error(msg)
 
     def warning(self, msg):
         """Always show warnings."""
+        if color_formatter:
+            # Only colorize if message doesn't already have color codes
+            if '\033[' not in msg:
+                msg = color_formatter.warning(msg)
         logger.warning(msg)
 
     def info(self, msg, level=1):
         """Info messages with verbosity level."""
+        # Check for silent mode first
+        if self.verbosity_config and self.verbosity_config.is_silent():
+            return  # No output at all in silent mode
+            
         if self._should_log(level):
-            logger.info(msg)
+            if color_formatter and level == 0:
+                # Only colorize level 0 info messages (important info)
+                if '\033[' not in msg:
+                    msg = color_formatter.info(msg)
+            
+            # In quiet mode, use print for level 0 messages since logger.info() is suppressed
+            if self.quiet and level == 0:
+                print(msg, file=sys.stderr)
+            else:
+                logger.info(msg)
 
     def debug(self, msg):
         """Debug messages (verbosity level 3)."""
@@ -180,6 +231,478 @@ class DazzleLogger:
 
 # Global logger instance - will be set up in main()
 dazzle_logger = None
+
+
+class ColorFormatter:
+    """Cross-platform color formatter for terminal output."""
+    
+    def __init__(self, use_colors=None):
+        """Initialize color formatter.
+        
+        Args:
+            use_colors: If None, auto-detect terminal support. Otherwise bool.
+        """
+        self.colorama_available = False
+        self.use_colors = False
+        
+        # Try to import and initialize colorama for Windows support
+        try:
+            import colorama
+            colorama.init()  # Enable ANSI escape sequences on Windows
+            self.colorama_available = True
+        except ImportError:
+            pass
+        
+        if use_colors is None:
+            self.use_colors = self._supports_color()
+        else:
+            self.use_colors = use_colors
+    
+    def _supports_color(self):
+        """Check if terminal supports ANSI colors."""
+        import sys
+        
+        # Check environment variable to disable colors
+        if os.environ.get('NO_COLOR') or os.environ.get('DAZZLESUM_NO_COLOR'):
+            return False
+        
+        # Check if stdout is a terminal
+        if not hasattr(sys.stdout, 'isatty') or not sys.stdout.isatty():
+            return False
+        
+        # If we have colorama, Windows should work
+        if is_windows() and self.colorama_available:
+            return True
+        
+        # Check environment variables for Unix-like systems
+        term = os.environ.get('TERM', '').lower()
+        colorterm = os.environ.get('COLORTERM', '').lower()
+        
+        # Explicit color support indicators
+        if os.environ.get('FORCE_COLOR') or os.environ.get('DAZZLESUM_FORCE_COLOR'):
+            return True
+        
+        # Most modern terminals support color
+        if any(x in term for x in ['color', 'xterm', 'screen', 'tmux']):
+            return True
+        if colorterm:
+            return True
+        
+        # Windows 10+ with ANSI support (without colorama)
+        if is_windows():
+            try:
+                # Try to enable ANSI escape sequences
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+                mode = ctypes.c_ulong()
+                kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+                # Enable VIRTUAL_TERMINAL_PROCESSING
+                kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+                return True
+            except Exception:
+                # Fallback: for older Windows or restricted environments
+                return False
+        
+        return False
+    
+    # ANSI color codes
+    COLORS = {
+        'red': '\033[91m',
+        'green': '\033[92m', 
+        'yellow': '\033[93m',
+        'blue': '\033[94m',
+        'light_blue': '\033[96m',
+        'light_green': '\033[92m',
+        'light_red': '\033[91m',
+        'light_yellow': '\033[93m',
+        'white': '\033[97m',
+        'light_gray': '\033[90m',
+        'purple': '\033[38;2;186;128;187m',  # Custom purple #ba80bb (brighter)
+        'bold': '\033[1m',
+        'reset': '\033[0m'
+    }
+    
+    def colorize(self, text, color=None, bold=False):
+        """Apply color and formatting to text.
+        
+        Args:
+            text: Text to colorize
+            color: Color name from COLORS dict
+            bold: Whether to make text bold
+            
+        Returns:
+            Formatted text with ANSI codes or plain text if colors disabled
+        """
+        if not self.use_colors:
+            return text
+        
+        codes = []
+        if bold:
+            codes.append(self.COLORS['bold'])
+        if color and color in self.COLORS:
+            codes.append(self.COLORS[color])
+        
+        if codes:
+            return ''.join(codes) + text + self.COLORS['reset']
+        return text
+    
+    def success(self, text, bold=False):
+        """Format success text (green)."""
+        return self.colorize(text, 'green', bold)
+    
+    def error(self, text, bold=False):
+        """Format error text (red)."""
+        return self.colorize(text, 'light_red', bold)
+    
+    def warning(self, text, bold=False):
+        """Format warning text (yellow)."""
+        return self.colorize(text, 'light_yellow', bold)
+    
+    def info(self, text, bold=False):
+        """Format info text (light green)."""
+        return self.colorize(text, 'light_green', bold)
+    
+    def extra(self, text, bold=False):
+        """Format extra files text (light blue)."""
+        return self.colorize(text, 'light_blue', bold)
+    
+    def bold_number(self, number):
+        """Format a number in bold."""
+        return self.colorize(str(number), bold=True)
+    
+    def filename(self, text):
+        """Format filename text (bold white)."""
+        return self.colorize(text, 'white', bold=True)
+    
+    def hash_value(self, text):
+        """Format hash value text (light gray)."""
+        return self.colorize(text, 'light_gray')
+    
+    def info_secondary(self, text):
+        """Format secondary info text (light blue/cyan) for informational messages."""
+        return self.colorize(text, 'light_blue')
+    
+    def grand_totals(self, text, bold=False):
+        """Format grand totals text (purple) to distinguish from success states."""
+        return self.colorize(text, 'purple', bold)
+
+
+# Global color formatter instance - will be set up in main()
+color_formatter = None
+
+# Global exit code for verification operations - will be set by verification results
+verification_exit_code = 0
+
+# Global flag to track if this is an auto-detected command
+is_auto_detected_command = False
+
+# Global verbosity configuration instance
+verbosity_config = None
+
+
+class VerbosityConfig:
+    """Handles verbosity level configuration and environment variables."""
+    
+    def __init__(self, level=0, quiet_count=0, verbose_count=0):
+        self.level = level
+        self.quiet_count = quiet_count
+        self.verbose_count = verbose_count
+    
+    @classmethod
+    def from_environment(cls):
+        """Create config from environment variables."""
+        env_verbosity = os.environ.get('DAZZLESUM_VERBOSITY')
+        if env_verbosity:
+            try:
+                level = int(env_verbosity)
+                # Clamp to reasonable range
+                level = max(-5, min(4, level))
+                return cls(level=level)
+            except ValueError:
+                # Invalid value, use default
+                pass
+        return cls()
+    
+    @classmethod
+    def from_args(cls, args):
+        """Create config from command line arguments."""
+        quiet_count = getattr(args, 'quiet', 0)
+        verbose_count = getattr(args, 'verbose', 0)
+        
+        # Handle explicit --verbosity flag
+        if hasattr(args, 'verbosity') and args.verbosity is not None:
+            level = max(-5, min(4, args.verbosity))
+            return cls(level=level, quiet_count=quiet_count, verbose_count=verbose_count)
+        
+        # Calculate level from -q/-v counts: base + verbose - quiet
+        level = verbose_count - quiet_count
+        level = max(-5, min(4, level))  # Clamp to valid range
+        
+        return cls(level=level, quiet_count=quiet_count, verbose_count=verbose_count)
+    
+    def get_effective_level(self):
+        """Calculate final verbosity level."""
+        return self.level
+    
+    def get_squelch_settings(self):
+        """Map verbosity level to squelch configuration."""
+        # Note: True means squelched (hidden), False means shown
+        VERBOSITY_SQUELCH_MAP = {
+            -6: {'show_output': False},  # Special case: no output at all, only exit codes
+            -5: {'INFO': True,  'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': True},   # Only grand total summary  # noqa: E241
+            -4: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': False, 'FORCE_SUMMARY': True},  # info/status line + grand total  # noqa: E241
+            -3: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': False, 'SUMMARY': False},  # FAIL + info/status + grand total  # noqa: E241
+            -2: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # MISSING + FAIL + info/status + grand total  # noqa: E241
+            -1: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},  # EXTRA + MISSING + FAIL + info/status + grand total  # noqa: E241
+             0: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Current default  # noqa: E241,E131
+            +1: {'INFO': False, 'SUCCESS': False, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Show everything
+            # +2 and above: controlled by logger verbosity, not squelch
+        }
+        
+        return VERBOSITY_SQUELCH_MAP.get(self.level, VERBOSITY_SQUELCH_MAP[0])
+    
+    def should_show_log_types(self):
+        """Determine if log type prefixes should be shown."""
+        # Check explicit environment variable first
+        env_show_types = os.environ.get('DAZZLESUM_SHOW_LOG_TYPES', '').lower()
+        if env_show_types in ('1', 'true', 'yes'):
+            return True
+        
+        # For debug levels (+2 and above), show log types by default
+        return self.level >= 2
+    
+    def is_silent(self):
+        """Check if we're in silent mode (-6)."""
+        return self.level <= -6
+
+
+def initialize_squelch_from_verbosity(verbosity_level):
+    """Set global squelch_settings based on verbosity level."""
+    global squelch_settings  # noqa: F824
+    
+    if verbosity_config:
+        squelch_settings = verbosity_config.get_squelch_settings()
+    else:
+        # Fallback if verbosity_config not available
+        # Note: True means squelched (hidden), False means shown
+        VERBOSITY_SQUELCH_MAP = {
+            -6: {'show_output': False},
+            -5: {'INFO': True,  'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': True},  # noqa: E241
+            -4: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': False, 'FORCE_SUMMARY': True},  # noqa: E241
+            -3: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': False, 'SUMMARY': False},  # noqa: E241
+            -2: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # noqa: E241
+            -1: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},  # noqa: E241
+             0: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # noqa: E241,E131
+            +1: {'INFO': False, 'SUCCESS': False, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},
+        }
+        squelch_settings = VERBOSITY_SQUELCH_MAP.get(verbosity_level, VERBOSITY_SQUELCH_MAP[0])
+
+
+class GrandTotals:
+    """Aggregate statistics across multiple directory verifications."""
+    
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        """Reset all counters for a new verification run."""
+        # Directory categorization
+        self.directories_processed = 0
+        self.directories_success = 0      # 100% success
+        self.directories_no_shasum = 0    # No .shasum file found
+        self.directories_partial = 0     # Mixed results but no failures
+        self.directories_failed = 0      # Has failures or missing files
+        
+        # File statistics
+        self.files_verified = 0
+        self.files_failed = 0
+        self.files_missing = 0
+        self.files_extra = 0
+        
+        # Performance tracking
+        self.start_time = None
+        self.end_time = None
+    
+    def start_timing(self):
+        """Start timing the verification process."""
+        import time
+        self.start_time = time.time()
+    
+    def end_timing(self):
+        """End timing the verification process."""
+        import time
+        self.end_time = time.time()
+    
+    def add_directory_result(self, results):
+        """Add results from a single directory verification.
+        
+        Args:
+            results: Dictionary with verification results from _print_verification_results
+        """
+        self.directories_processed += 1
+        
+        if 'error' in results:
+            # Check if this is a "No .shasum file found" case
+            if "No .shasum file found" in results['error']:
+                self.directories_no_shasum += 1
+            else:
+                self.directories_failed += 1
+        else:
+            # Count files
+            verified = len(results.get('verified', []))
+            failed = len(results.get('failed', []))
+            missing = len(results.get('missing', []))
+            extra = len(results.get('extra', []))
+            
+            self.files_verified += verified
+            self.files_failed += failed
+            self.files_missing += missing
+            self.files_extra += extra
+            
+            # Categorize directory based on results
+            if failed == 0 and missing == 0:
+                if extra == 0:
+                    self.directories_success += 1
+                else:
+                    self.directories_partial += 1  # Has extra files but no failures
+            else:
+                self.directories_failed += 1
+    
+    def get_overall_success_percentage(self):
+        """Calculate overall success percentage across all files."""
+        total_expected = self.files_verified + self.files_failed + self.files_missing
+        if total_expected == 0:
+            return 100 if self.files_extra == 0 else 0
+        
+        return round((self.files_verified / total_expected) * 100)
+    
+    def get_overall_failure_percentage(self):
+        """Calculate overall failure percentage across all files."""
+        return 100 - self.get_overall_success_percentage()
+    
+    def get_processing_time(self):
+        """Get total processing time in seconds."""
+        if self.start_time and self.end_time:
+            return self.end_time - self.start_time
+        return 0
+    
+    def get_throughput(self):
+        """Get files per second throughput."""
+        processing_time = self.get_processing_time()
+        total_files = self.files_verified + self.files_failed + self.files_missing + self.files_extra
+        
+        if processing_time > 0 and total_files > 0:
+            return round(total_files / processing_time)
+        return 0
+    
+    def display_grand_totals(self):
+        """Display the grand totals summary."""
+        global verbosity_config  # noqa: F824
+        if not dazzle_logger:
+            return
+            
+        # Check if we're in silent mode - no output at all
+        if verbosity_config and verbosity_config.is_silent():
+            return
+        
+        # Calculate overall statistics
+        success_pct = self.get_overall_success_percentage()
+        failure_pct = self.get_overall_failure_percentage()
+        processing_time = self.get_processing_time()
+        throughput = self.get_throughput()
+        
+        # Determine overall status using same logic as individual directories
+        status_text, exit_code, _, _ = calculate_verification_status(
+            self.files_verified, self.files_failed, self.files_missing, self.files_extra
+        )
+        
+        # Update global exit code
+        global verification_exit_code
+        # For recursive operations, the grand totals exit code should override individual directory codes
+        # This ensures the exit code reflects overall repository health, not worst individual directory
+        verification_exit_code = exit_code
+        
+        # Display header
+        dazzle_logger.info("", level=0)  # Blank line
+        if color_formatter:
+            header = color_formatter.grand_totals("=== GRAND TOTALS ===", bold=True)
+        else:
+            header = "=== GRAND TOTALS ==="
+        dazzle_logger.info(header, level=0)
+        
+        # Directory summary with colored status words
+        if color_formatter:
+            processed_text = f"{color_formatter.bold_number(self.directories_processed)} processed"
+        else:
+            processed_text = f"{self.directories_processed} processed"
+        
+        dir_summary = f"Directories: {processed_text}"
+        
+        if self.directories_processed > 0:
+            parts = []
+            if self.directories_success > 0:
+                if color_formatter:
+                    parts.append(f"{color_formatter.bold_number(self.directories_success)} {color_formatter.success('success')}")
+                else:
+                    parts.append(f"{self.directories_success} success")
+            if self.directories_no_shasum > 0:
+                if color_formatter:
+                    parts.append(f"{color_formatter.bold_number(self.directories_no_shasum)} {color_formatter.info_secondary('no-shasum')}")
+                else:
+                    parts.append(f"{self.directories_no_shasum} no-shasum")
+            if self.directories_partial > 0:
+                if color_formatter:
+                    parts.append(f"{color_formatter.bold_number(self.directories_partial)} {color_formatter.extra('partial')}")
+                else:
+                    parts.append(f"{self.directories_partial} partial")
+            if self.directories_failed > 0:
+                if color_formatter:
+                    parts.append(f"{color_formatter.bold_number(self.directories_failed)} {color_formatter.error('failed')}")
+                else:
+                    parts.append(f"{self.directories_failed} failed")
+            
+            if parts:
+                dir_summary += f" ({', '.join(parts)})"
+        
+        dazzle_logger.info(dir_summary, level=0)
+        
+        # File summary with colored status
+        total_files = self.files_verified + self.files_failed + self.files_missing + self.files_extra
+        if total_files > 0:
+            colored_status = format_status_with_colors(status_text, success_pct, failure_pct)
+            
+            if color_formatter:
+                verified_text = f"{color_formatter.bold_number(self.files_verified)} {color_formatter.success('verified')}"
+                failed_text = f"{color_formatter.bold_number(self.files_failed)} {color_formatter.error('failed')}"
+                missing_text = f"{color_formatter.bold_number(self.files_missing)} {color_formatter.warning('missing')}"
+                extra_text = f"{color_formatter.bold_number(self.files_extra)} {color_formatter.extra('extra')}"
+            else:
+                verified_text = f"{self.files_verified} verified"
+                failed_text = f"{self.files_failed} failed"
+                missing_text = f"{self.files_missing} missing"
+                extra_text = f"{self.files_extra} extra"
+            
+            file_summary = f"Files: {verified_text}, {failed_text}, {missing_text}, {extra_text} ({colored_status})"
+            dazzle_logger.info(file_summary, level=0)
+        
+        # Processing time and throughput
+        if processing_time > 0:
+            time_summary = f"Processing: {processing_time:.2f} seconds"
+            if throughput > 0:
+                time_summary += f" ({throughput} files/sec)"
+            if color_formatter:
+                colored_time_summary = color_formatter.grand_totals(time_summary)
+            else:
+                colored_time_summary = time_summary
+            dazzle_logger.info(colored_time_summary, level=0)
+
+
+# Global grand totals instance for recursive operations
+grand_totals = None
+
+# Global squelch settings for output filtering (initialized by verbosity system)
+squelch_settings = None
 
 
 class ShasumManager:
@@ -415,7 +938,7 @@ class ShasumManager:
 class MonolithicWriter:
     """Handles streaming writes to monolithic checksum files."""
 
-    def __init__(self, output_path: Path, root_path: Path, algorithm: str):
+    def __init__(self, output_path: Path, root_path: Path, algorithm: str, resume_mode=False, yes_to_all=False):
         self.output_path = Path(output_path)
         self.temp_path = Path(str(output_path) + '.tmp')
         self.root_path = Path(root_path)
@@ -423,6 +946,9 @@ class MonolithicWriter:
         self.file_handle = None
         self.entries_written = 0
         self._is_open = False
+        self._last_progress_report = 0
+        self.resume_mode = resume_mode
+        self.yes_to_all = yes_to_all
 
     def __enter__(self):
         """Context manager entry."""
@@ -444,14 +970,35 @@ class MonolithicWriter:
             # Ensure output directory exists
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Open temp file for writing
-            self.file_handle = open(self.temp_path, 'w', encoding='utf-8', buffering=8192)
-            self._is_open = True
+            # Check for existing file (but not in resume mode - that's handled separately)
+            if not self.resume_mode and self.output_path.exists():
+                if not self._check_overwrite_permission():
+                    print("Operation cancelled.")
+                    raise KeyboardInterrupt("User cancelled overwrite operation")
 
-            # Write header
-            timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-            self.file_handle.write(f"# Dazzle monolithic checksum file v{__version__} - {self.algorithm} - {timestamp}\n")
-            self.file_handle.write(f"# Root directory: {self.root_path}\n")
+            if self.resume_mode and self.output_path.exists():
+                # Resume mode: copy existing file to temp and append
+                shutil.copy2(self.output_path, self.temp_path)
+                # Open in append mode, but first remove the footer if it exists
+                with open(self.temp_path, 'r+', encoding='utf-8', buffering=1024) as f:
+                    content = f.read()
+                    # Remove existing footer
+                    if content.endswith('# End of checksums\n'):
+                        f.seek(0)
+                        f.write(content[:-len('# End of checksums\n')])
+                        f.truncate()
+                # Now open for appending
+                self.file_handle = open(self.temp_path, 'a', encoding='utf-8', buffering=1024)
+                logger.info(f"Resume mode: Appending to existing monolithic file: {self.output_path}")
+            else:
+                # Normal mode: create new file
+                self.file_handle = open(self.temp_path, 'w', encoding='utf-8', buffering=1024)
+                # Write header
+                timestamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                self.file_handle.write(f"# Dazzle monolithic checksum file v{__version__} - {self.algorithm} - {timestamp}\n")
+                self.file_handle.write(f"# Root directory: {self.root_path}\n")
+                
+            self._is_open = True
             self.file_handle.flush()
 
             logger.debug(f"Opened monolithic file for writing: {self.temp_path}")
@@ -483,8 +1030,20 @@ class MonolithicWriter:
                 self.file_handle.write(f"{checksum_info['hash']}  {relative_path}\n")
                 self.entries_written += 1
 
-            # Flush to ensure data is written
+            # Flush to ensure data is written immediately
             self.file_handle.flush()
+            # Force OS to write to disk (for real-time monitoring on large operations)
+            try:
+                os.fsync(self.file_handle.fileno())
+            except (OSError, AttributeError):
+                # fsync might not be available on all platforms/filesystems
+                pass
+            
+            # Report progress periodically for large operations
+            if self.entries_written > 0 and self.entries_written % 10000 == 0:
+                if self.entries_written != self._last_progress_report:
+                    logger.info(f"Monolithic file: {self.entries_written:,} entries written")
+                    self._last_progress_report = self.entries_written
 
         except Exception as e:
             logger.error(f"Failed to append checksums for {directory}: {e}")
@@ -507,8 +1066,8 @@ class MonolithicWriter:
                 self.file_handle = None
 
             if success and self.temp_path.exists():
-                # Atomic rename to final location
-                os.rename(self.temp_path, self.output_path)
+                # Cross-platform atomic replacement
+                self._atomic_replace(self.temp_path, self.output_path)
                 logger.info(f"Wrote {self.entries_written} checksums to monolithic file: {self.output_path}")
             else:
                 # Cleanup temp file on failure
@@ -528,6 +1087,90 @@ class MonolithicWriter:
                 os.remove(self.temp_path)
         except Exception as e:
             logger.warning(f"Could not remove temp file {self.temp_path}: {e}")
+
+    def _atomic_replace(self, src: Path, dst: Path):
+        """Cross-platform atomic file replacement."""
+        if is_windows():
+            # Windows: requires removing target first
+            if dst.exists():
+                backup_path = dst.with_suffix(dst.suffix + '.bak')
+                # Remove any existing backup
+                if backup_path.exists():
+                    backup_path.unlink()
+                # Move current file to backup
+                dst.rename(backup_path)
+                try:
+                    # Move temp file to final location
+                    src.rename(dst)
+                    # Remove backup on success
+                    backup_path.unlink()
+                except Exception:
+                    # Restore backup on failure
+                    if backup_path.exists():
+                        backup_path.rename(dst)
+                    raise
+            else:
+                # No existing file, simple rename
+                src.rename(dst)
+        else:
+            # Unix: atomic rename (overwrites existing file)
+            src.rename(dst)
+
+    def _check_overwrite_permission(self) -> bool:
+        """Check if user wants to overwrite existing monolithic file."""
+        # Auto-accept if --yes flag was used
+        if self.yes_to_all:
+            print(f"Overwriting existing file: {self.output_path.name}")
+            return True
+        
+        # Get file info
+        try:
+            stat_info = self.output_path.stat()
+            file_size = stat_info.st_size
+            mod_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stat_info.st_mtime))
+            
+            # Count entries (quick check)
+            entry_count = 0
+            try:
+                with open(self.output_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip() and not line.startswith('#') and '  ' in line:
+                            entry_count += 1
+            except Exception:
+                entry_count = "unknown"
+            
+        except Exception:
+            file_size = 0
+            mod_time = "unknown"
+            entry_count = "unknown"
+        
+        # Show file information and prompt
+        print(f"\nFile '{self.output_path.name}' already exists:")
+        if entry_count != "unknown":
+            print(f"  Entries: {entry_count:,}")
+        if file_size > 0:
+            print(f"  Size: {self._format_size(file_size)}")
+        print(f"  Modified: {mod_time}")
+        
+        print(f"\nAlternatives:")
+        print(f"  - Use 'dazzlesum update -r .' for incremental updates")
+        print(f"  - Use 'dazzlesum create -r --output different-name.{self.algorithm}' for different filename")
+        print(f"  - Use '-y' flag to auto-overwrite in scripts")
+        
+        try:
+            response = input(f"\nOverwrite '{self.output_path.name}'? (y/N): ").strip().lower()
+            return response in ['y', 'yes']
+        except (KeyboardInterrupt, EOFError):
+            print("\nOperation cancelled.")
+            return False
+
+    def _format_size(self, bytes_count: int) -> str:
+        """Format bytes in human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes_count < 1024:
+                return f"{bytes_count:.1f} {unit}"
+            bytes_count /= 1024
+        return f"{bytes_count:.1f} TB"
 
 
 class ProgressTracker:
@@ -616,6 +1259,11 @@ class ProgressTracker:
     def finish(self):
         """Complete the progress display."""
         if self.show_progress and (self.total_dirs > 0 or self.total_files > 0):
+            # Force final 100% display
+            self.processed_dirs = self.total_dirs
+            self.processed_files = self.total_files
+            self._display_progress()
+            
             print()  # New line after progress bar
             elapsed = time.time() - self.start_time
             logger.info(f"Completed {self.processed_dirs} directories, {self.processed_files} files in {self._format_duration(elapsed)}")
@@ -703,8 +1351,19 @@ class SummaryCollector:
 
 
 def count_dirs_and_files(root_path: Path, include_patterns, exclude_patterns,
-                        follow_symlinks=False) -> Tuple[int, int]:
-    """Pre-walk directory tree to count directories and files."""
+                        follow_symlinks=False, recursive=True) -> Tuple[int, int]:
+    """Pre-walk directory tree to count directories and files.
+    
+    Args:
+        root_path: Root directory to count from
+        include_patterns: Patterns for files to include
+        exclude_patterns: Patterns for files to exclude  
+        follow_symlinks: Whether to follow symbolic links
+        recursive: Whether to count subdirectories recursively
+        
+    Returns:
+        Tuple of (directory_count, file_count)
+    """
     symlink_handler = SymlinkHandler()
     total_dirs = 0
     total_files = 0
@@ -734,7 +1393,8 @@ def count_dirs_and_files(root_path: Path, include_patterns, exclude_patterns,
                     if _should_include_file_simple(item, include_patterns, exclude_patterns):
                         total_files += 1
                 elif item.is_dir() and not symlink_handler.is_visited(item):
-                    dirs_to_visit.append(item)
+                    if recursive:
+                        dirs_to_visit.append(item)
         except Exception:
             # Skip directories we can't access
             continue
@@ -1283,17 +1943,104 @@ def is_monolithic_file(file_path: Path) -> bool:
         return False
 
 
+class ShadowPathResolver:
+    """Resolves paths between source directories and shadow directory structure.
+    
+    The shadow directory feature allows keeping source directories clean by storing
+    all .shasum files in a parallel shadow directory structure.
+    
+    Example:
+        source_root: /data/projects/myproject/
+        shadow_root: /checksums/myproject/
+        
+        Source file: /data/projects/myproject/subdir/file.txt
+        Shadow .shasum: /checksums/myproject/subdir/.shasum
+    """
+    
+    def __init__(self, source_root: Path, shadow_root: Path):
+        self.source_root = Path(source_root).resolve()
+        self.shadow_root = Path(shadow_root).resolve()
+        
+        # Ensure shadow root directory exists
+        self.shadow_root.mkdir(parents=True, exist_ok=True)
+    
+    def get_shadow_shasum_path(self, source_dir: Path) -> Path:
+        """Get the shadow .shasum file path for a source directory.
+        
+        Args:
+            source_dir: Source directory that would contain .shasum file
+            
+        Returns:
+            Path to .shasum file in shadow directory structure
+        """
+        source_dir = Path(source_dir).resolve()
+        
+        # Calculate relative path from source root
+        try:
+            rel_path = source_dir.relative_to(self.source_root)
+        except ValueError:
+            # source_dir is not under source_root
+            raise ValueError(f"Source directory {source_dir} is not under source root {self.source_root}")
+        
+        # Create corresponding shadow directory path
+        shadow_dir = self.shadow_root / rel_path
+        return shadow_dir / SHASUM_FILENAME
+    
+    def get_source_file_path(self, shadow_relative_path: str) -> Path:
+        """Resolve a shadow-relative file path to the corresponding source file.
+        
+        Args:
+            shadow_relative_path: Relative path as stored in shadow .shasum file
+            
+        Returns:
+            Path to actual source file
+        """
+        return self.source_root / shadow_relative_path
+    
+    def ensure_shadow_directory(self, shadow_shasum_path: Path) -> None:
+        """Ensure the directory for a shadow .shasum file exists.
+        
+        Args:
+            shadow_shasum_path: Path to shadow .shasum file
+        """
+        shadow_shasum_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    def get_shadow_monolithic_path(self, algorithm: str, output_filename: Optional[str] = None) -> Path:
+        """Get path for monolithic checksum file in shadow directory.
+        
+        Args:
+            algorithm: Hash algorithm for default filename
+            output_filename: Optional custom filename
+            
+        Returns:
+            Path to monolithic checksum file in shadow root
+        """
+        if output_filename:
+            return self.shadow_root / output_filename
+        return self.shadow_root / f"{MONOLITHIC_DEFAULT_NAME}.{algorithm}"
+
+
 class ChecksumGenerator:
     """Main checksum generator orchestrator."""
 
     def __init__(self, algorithm=DEFAULT_ALGORITHM, line_ending_strategy='auto',
                  include_patterns=None, exclude_patterns=None, follow_symlinks=False,
                  log_file=None, summary_mode=False, generate_individual=True,
-                 generate_monolithic=False, output_file=None, show_all_verifications=False):
+                 generate_monolithic=False, output_file=None, show_all_verifications=False,
+                 shadow_dir=None, resume_mode=False, yes_to_all=False):
         self.algorithm = algorithm.lower()
         self.calculator = DazzleHashCalculator(algorithm, line_ending_strategy)
         self.include_patterns = include_patterns or []
-        self.exclude_patterns = exclude_patterns or ['*.tmp', '*.log', SHASUM_FILENAME, STATE_FILENAME]
+        self.exclude_patterns = exclude_patterns or [SHASUM_FILENAME, STATE_FILENAME]
+        
+        # For monolithic mode, also exclude the temporary file that will be created
+        if generate_monolithic:
+            if output_file:
+                temp_filename = Path(output_file).name + '.tmp'
+            else:
+                temp_filename = f"{MONOLITHIC_DEFAULT_NAME}.{self.algorithm}.tmp"
+            self.exclude_patterns.append(temp_filename)
+        
         self.follow_symlinks = follow_symlinks
         self.log_file = log_file
         self.summary_mode = summary_mode
@@ -1301,12 +2048,92 @@ class ChecksumGenerator:
         self.generate_monolithic = generate_monolithic
         self.output_file = output_file
         self.show_all_verifications = show_all_verifications
+        self.resume_mode = resume_mode
+        self.yes_to_all = yes_to_all
         self.summary_collector = SummaryCollector()
         self.progress_tracker = None
+        
+        # Shadow directory support
+        self.shadow_dir = Path(shadow_dir) if shadow_dir else None
+        self.shadow_resolver = None
+        
+        # Resume support - track processed directories
+        self.processed_directories = set()
+        self.existing_monolithic_entries = set() if resume_mode else None
 
         # Set up log file if specified
         if self.log_file:
             self._setup_log_file()
+    
+    def _initialize_resume_state(self, root_directory: Path):
+        """Initialize resume state by scanning existing checksum files."""
+        if not self.resume_mode:
+            return
+            
+        logger.info("Resume mode: Scanning for existing checksums...")
+        
+        # For individual mode, find existing .shasum files
+        if self.generate_individual:
+            if self.shadow_resolver:
+                # Check shadow directory for existing .shasum files
+                for shadow_file in self.shadow_resolver.shadow_root.rglob('.shasum'):
+                    # Map back to source directory
+                    rel_path = shadow_file.parent.relative_to(self.shadow_resolver.shadow_root)
+                    if rel_path == Path('.'):
+                        source_dir = self.shadow_resolver.source_root
+                    else:
+                        source_dir = self.shadow_resolver.source_root / rel_path
+                    self.processed_directories.add(str(source_dir.resolve()))
+            else:
+                # Check source directories for existing .shasum files
+                for shasum_file in root_directory.rglob('.shasum'):
+                    self.processed_directories.add(str(shasum_file.parent.resolve()))
+        
+        # For monolithic mode, parse existing monolithic file
+        if self.generate_monolithic and self.existing_monolithic_entries is not None:
+            monolithic_path = self._get_monolithic_path(root_directory)
+            if monolithic_path and monolithic_path.exists():
+                try:
+                    with open(monolithic_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                parts = line.split('  ', 1)
+                                if len(parts) == 2:
+                                    _, relative_path = parts
+                                    # Convert back to directory path
+                                    file_path = Path(relative_path)
+                                    dir_path = str((root_directory / file_path.parent).resolve())
+                                    self.existing_monolithic_entries.add(relative_path)
+                                    self.processed_directories.add(dir_path)
+                except Exception as e:
+                    logger.warning(f"Could not parse existing monolithic file for resume: {e}")
+        
+        if self.processed_directories:
+            logger.info(f"Resume mode: Found {len(self.processed_directories)} directories with existing checksums")
+        else:
+            logger.info("Resume mode: No existing checksums found, starting fresh")
+    
+    def _get_monolithic_path(self, root_directory: Path) -> Optional[Path]:
+        """Get the path where monolithic file would be/is stored."""
+        if self.shadow_resolver:
+            return self.shadow_resolver.get_shadow_monolithic_path(self.algorithm, self.output_file)
+        elif self.output_file:
+            output_path = Path(self.output_file)
+            if not output_path.is_absolute():
+                output_path = root_directory / output_path
+            return output_path
+        else:
+            ext = f".{self.algorithm}"
+            return root_directory / f"{MONOLITHIC_DEFAULT_NAME}{ext}"
+    
+    def _should_skip_directory(self, directory: Path) -> bool:
+        """Check if directory should be skipped in resume mode."""
+        if not self.resume_mode:
+            return False
+            
+        dir_str = str(directory.resolve())
+        return dir_str in self.processed_directories
 
     def _setup_log_file(self):
         """Set up detailed logging to file."""
@@ -1421,7 +2248,13 @@ class ChecksumGenerator:
 
     def write_shasum_file(self, directory: Path, checksums: Dict[str, Any]):
         """Write checksums to .shasum file in native-compatible format."""
-        shasum_path = directory / SHASUM_FILENAME
+        # Use shadow path if shadow mode is active
+        if self.shadow_resolver:
+            shasum_path = self.shadow_resolver.get_shadow_shasum_path(directory)
+            # Ensure shadow directory exists
+            self.shadow_resolver.ensure_shadow_directory(shasum_path)
+        else:
+            shasum_path = directory / SHASUM_FILENAME
 
         try:
             with open(shasum_path, 'w', encoding='utf-8') as f:
@@ -1448,10 +2281,14 @@ class ChecksumGenerator:
 
     def verify_checksums_in_directory(self, directory: Path) -> Dict[str, Any]:
         """Verify checksums in a directory against its .shasum file."""
-        shasum_path = directory / SHASUM_FILENAME
+        # Use shadow path if shadow mode is active
+        if self.shadow_resolver:
+            shasum_path = self.shadow_resolver.get_shadow_shasum_path(directory)
+        else:
+            shasum_path = directory / SHASUM_FILENAME
 
         if not shasum_path.exists():
-            return {'error': f"No {SHASUM_FILENAME} file found in {directory}"}
+            return {'error': f"No {SHASUM_FILENAME} file found in {shasum_path}"}
 
         results = {
             'verified': [],
@@ -1476,7 +2313,11 @@ class ChecksumGenerator:
 
         # Check each stored checksum
         for filename, expected_hash in stored_checksums.items():
-            file_path = directory / filename
+            # In shadow mode, resolve relative path to source file
+            if self.shadow_resolver:
+                file_path = self.shadow_resolver.get_source_file_path(filename)
+            else:
+                file_path = directory / filename
 
             if not file_path.exists():
                 results['missing'].append(filename)
@@ -1554,10 +2395,16 @@ class ChecksumGenerator:
             return {'error': f"Error reading monolithic file: {e}"}
 
         # Determine base path for verification
-        if file_root and Path(file_root).exists():
-            base_path = Path(file_root)
-        else:
-            base_path = root_directory
+        # Always use the user-specified directory for verification
+        # The stored root directory is only for reference/documentation
+        base_path = root_directory
+        
+        # Inform user if verifying against different directory than stored
+        if file_root and str(Path(file_root).resolve()) != str(base_path.resolve()):
+            if dazzle_logger and not dazzle_logger.quiet:
+                dazzle_logger.info(f"Clone verification: Checking {base_path} against checksums from {file_root}", level=1)
+            else:
+                logger.info(f"Clone verification: Checking {base_path} against checksums from {file_root}")
 
         # Check each stored checksum
         for relative_path, expected_hash in stored_checksums.items():
@@ -1606,6 +2453,8 @@ class ChecksumGenerator:
     def process_directory_tree(self, root_directory: Path, recursive=True,
                              verify_only=False, update_mode=False):
         """Process an entire directory tree."""
+        global grand_totals
+        
         if not root_directory.exists():
             logger.error(f"Directory does not exist: {root_directory}")
             return
@@ -1613,6 +2462,21 @@ class ChecksumGenerator:
         if not root_directory.is_dir():
             logger.error(f"Path is not a directory: {root_directory}")
             return
+
+        # Initialize shadow resolver if shadow directory is specified
+        if self.shadow_dir:
+            self.shadow_resolver = ShadowPathResolver(
+                source_root=root_directory,
+                shadow_root=self.shadow_dir
+            )
+            if dazzle_logger:
+                dazzle_logger.info(f"Using shadow directory: {self.shadow_dir}", level=1)
+            else:
+                logger.info(f"Using shadow directory: {self.shadow_dir}")
+        
+        # Initialize resume state if resume mode is enabled
+        if not verify_only:  # Only for generation, not verification
+            self._initialize_resume_state(root_directory)
 
         # Check for monolithic verification mode
         if verify_only and self.generate_monolithic:
@@ -1647,14 +2511,11 @@ class ChecksumGenerator:
 
         # Initialize progress tracking if summary mode
         if self.summary_mode:
-            if not self.summary_mode:
-                logger.info("Counting directories and files...")
+            # Don't print info messages that interfere with progress bar
             total_dirs, total_files = count_dirs_and_files(
-                root_directory, self.include_patterns, self.exclude_patterns, self.follow_symlinks
+                root_directory, self.include_patterns, self.exclude_patterns, self.follow_symlinks, recursive
             )
             self.progress_tracker = ProgressTracker(total_dirs, total_files, True)
-            if not self.summary_mode:
-                logger.info(f"Found {total_dirs} directories, {total_files} files to process")
 
         # Set up monolithic writer if needed
         monolithic_writer = None
@@ -1664,7 +2525,17 @@ class ChecksumGenerator:
                 return
 
             # Determine output file path
-            if self.output_file:
+            if self.shadow_resolver:
+                # Use shadow directory for monolithic file
+                output_path = self.shadow_resolver.get_shadow_monolithic_path(
+                    self.algorithm, 
+                    self.output_file
+                )
+                if dazzle_logger:
+                    dazzle_logger.info(f"Using shadow directory for monolithic file: {output_path}", level=1)
+                else:
+                    logger.info(f"Using shadow directory for monolithic file: {output_path}")
+            elif self.output_file:
                 output_path = Path(self.output_file)
                 if not output_path.is_absolute():
                     output_path = root_directory / output_path
@@ -1673,11 +2544,19 @@ class ChecksumGenerator:
                 ext = f".{self.algorithm}"
                 output_path = root_directory / f"{MONOLITHIC_DEFAULT_NAME}{ext}"
 
-            monolithic_writer = MonolithicWriter(output_path, root_directory, self.algorithm)
+            monolithic_writer = MonolithicWriter(output_path, root_directory, self.algorithm, self.resume_mode, self.yes_to_all)
 
         walker = FIFODirectoryWalker(self.follow_symlinks)
 
         def process_single_directory(directory: Path):
+            # Skip directory if in resume mode and already processed
+            if self._should_skip_directory(directory):
+                if dazzle_logger:
+                    dazzle_logger.info(f"Resume mode: Skipping already processed directory: {directory}", level=1)
+                else:
+                    logger.info(f"Resume mode: Skipping already processed directory: {directory}")
+                return
+                
             if verify_only:
                 if self.generate_monolithic:
                     # This shouldn't happen as we handle it above
@@ -1702,6 +2581,11 @@ class ChecksumGenerator:
             # Update progress tracker
             if self.progress_tracker:
                 self.progress_tracker.update_dirs(1)
+
+        # Initialize grand totals for recursive verification
+        if verify_only and recursive:
+            grand_totals = GrandTotals()
+            grand_totals.start_timing()
 
         if not self.summary_mode:
             logger.info(f"Starting {'recursive ' if recursive else ''}processing of {root_directory}")
@@ -1729,17 +2613,64 @@ class ChecksumGenerator:
         if not self.summary_mode:
             logger.info(f"Completed processing {walker.processed_count} directories in {elapsed_time:.2f}s")
 
+        # Display grand totals for recursive verification
+        if verify_only and recursive and grand_totals:
+            grand_totals.end_timing()
+            # Check for silent mode (-6) - no output at all
+            if not (verbosity_config and verbosity_config.is_silent()):
+                grand_totals.display_grand_totals()
+
         # Print summary if in summary mode
         if self.summary_mode:
             self.summary_collector.print_summary()
 
-    def _print_verification_results(self, path: Path, results: Dict[str, Any], show_all=False):
+    def _print_verification_results(self, path: Path, results: Dict[str, Any], show_all=False):  # noqa: C901
         """Print verification results for a directory or monolithic file."""
+        global squelch_settings, verbosity_config  # noqa: F824
+        
+        # Check for silent mode first - no output at all
+        if verbosity_config and verbosity_config.is_silent():
+            # Still add to grand totals if tracking, but no output
+            if grand_totals:
+                grand_totals.add_directory_result(results)
+            return
+        
+        # Check for ultra-quiet modes - only grand totals and maybe summary
+        if verbosity_config and verbosity_config.get_effective_level() <= -5:
+            # Still add to grand totals but skip all directory output
+            if grand_totals:
+                grand_totals.add_directory_result(results)
+            return
+        
         if 'error' in results:
-            if dazzle_logger:
-                dazzle_logger.error(f"{path}: {results['error']}")
+            # Check if this is a "No .shasum file found" informational message
+            error_msg = results['error']
+            if "No .shasum file found" in error_msg:
+                # Check squelch settings for NO_SHASUM messages
+                if squelch_settings and squelch_settings.get('NO_SHASUM', False):
+                    # Skip displaying this message due to squelch
+                    pass
+                else:
+                    # Use info_secondary color for missing .shasum files (not a failure, just informational)
+                    if color_formatter:
+                        colored_msg = color_formatter.info_secondary(f"{path}: {error_msg}")
+                    else:
+                        colored_msg = f"{path}: {error_msg}"
+                    
+                    if dazzle_logger:
+                        dazzle_logger.info(colored_msg, level=0)
+                    else:
+                        logger.info(colored_msg)
             else:
-                logger.error(f"{path}: {results['error']}")
+                # Regular error - use error formatting
+                if dazzle_logger:
+                    dazzle_logger.error(f"{path}: {error_msg}")
+                else:
+                    logger.error(f"{path}: {error_msg}")
+            
+            # Add error results to grand totals if tracking
+            if grand_totals:
+                grand_totals.add_directory_result(results)
             return
 
         verified_count = len(results['verified'])
@@ -1751,154 +2682,1248 @@ class ChecksumGenerator:
         if show_all or (dazzle_logger and dazzle_logger.verbosity >= 2):
             # Show all verification results
             for filename in results['verified']:
-                logger.info(f"  OK {filename}")
+                if color_formatter:
+                    logger.info(f" {color_formatter.success('OK')} {color_formatter.filename(filename)}")
+                else:
+                    logger.info(f" OK {filename}")
 
-        # Always show problems
-        if failed_count > 0:
+        # Show individual failure details - check squelch settings
+        if failed_count > 0 and not (squelch_settings and squelch_settings.get('FAILS', False)):
             for item in results['failed']:
                 if isinstance(item, dict):
                     if 'error' in item:
-                        if dazzle_logger:
-                            dazzle_logger.error(f"  ERROR {item['filename']}: {item['error']}")
+                        if color_formatter:
+                            error_text = f" {color_formatter.error('ERROR')} {color_formatter.filename(item['filename'])}: {item['error']}"
                         else:
-                            logger.error(f"  ERROR {item['filename']}: {item['error']}")
+                            error_text = f" ERROR {item['filename']}: {item['error']}"
+                        
+                        if dazzle_logger:
+                            dazzle_logger.error(error_text)
+                        else:
+                            logger.error(error_text)
                     else:
-                        # Always show hash mismatches (problems)
-                        if dazzle_logger:
-                            logger.error(f"  FAIL {item['filename']}: "
-                                       f"expected {item['expected'][:16]}... "
-                                       f"got {item['actual'][:16]}...")
+                        # Always show hash mismatches with new format: expected HASH... got HASH... | filename
+                        if color_formatter:
+                            expected_hash = color_formatter.hash_value(f"expected {item['expected'][:16]}...")
+                            got_hash = color_formatter.hash_value(f"got {item['actual'][:16]}...")
+                            filename_part = color_formatter.filename(item['filename'])
+                            fail_text = f" {color_formatter.error('FAIL')} {expected_hash} {got_hash} | {filename_part}"
                         else:
-                            logger.error(f"  FAIL {item['filename']}: "
-                                       f"expected {item['expected'][:16]}... "
-                                       f"got {item['actual'][:16]}...")
+                            fail_text = f" FAIL expected {item['expected'][:16]}... got {item['actual'][:16]}... | {item['filename']}"
+                        
+                        if dazzle_logger:
+                            logger.error(fail_text)
+                        else:
+                            logger.error(fail_text)
 
-        if missing_count > 0:
+        # Show individual missing files - check squelch settings
+        if missing_count > 0 and not (squelch_settings and squelch_settings.get('MISSING', False)):
             for filename in results['missing']:
-                # Always show missing files (problems)
-                logger.warning(f"  MISS {filename}")
+                # Show missing files (problems)
+                if color_formatter:
+                    miss_text = f" {color_formatter.warning('MISS')} {color_formatter.filename(filename)}"
+                else:
+                    miss_text = f" MISS {filename}"
+                logger.warning(miss_text)
 
-        if extra_count > 0:
+        # Show individual extra files - check squelch settings
+        if extra_count > 0 and not (squelch_settings and squelch_settings.get('EXTRA', False)):
             for filename in results['extra']:
-                # Always show extra files (problems)
-                logger.warning(f"  EXTRA {filename}")
+                # Show extra files
+                # In quiet mode, show directory context for EXTRA files
+                if dazzle_logger and dazzle_logger.quiet:
+                    if color_formatter:
+                        extra_text = f" {color_formatter.extra('EXTRA')} {color_formatter.filename(filename)} | {path}"
+                    else:
+                        extra_text = f" EXTRA {filename} | {path}"
+                else:
+                    if color_formatter:
+                        extra_text = f" {color_formatter.extra('EXTRA')} {color_formatter.filename(filename)}"
+                    else:
+                        extra_text = f" EXTRA {filename}"
+                logger.warning(extra_text)
 
-        # Summary line
-        if failed_count == 0 and missing_count == 0:
-            status = "OK"
-            if dazzle_logger:
-                dazzle_logger.info(f"{status} {path}: {verified_count} verified, "
-                                 f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
-            else:
-                logger.info(f"{status} {path}: {verified_count} verified, "
-                           f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
+        # Calculate intelligent status with percentages
+        status_text, exit_code, success_pct, failure_pct = calculate_verification_status(
+            verified_count, failed_count, missing_count, extra_count
+        )
+        
+        # Apply colors to the status text
+        colored_status = format_status_with_colors(status_text, success_pct, failure_pct)
+        
+        # Format count details with colors and bold numbers
+        if color_formatter:
+            verified_text = f"{color_formatter.bold_number(verified_count)} {color_formatter.success('verified')}"
+            failed_text = f"{color_formatter.bold_number(failed_count)} {color_formatter.error('failed')}"
+            missing_text = f"{color_formatter.bold_number(missing_count)} {color_formatter.warning('missing')}"
+            extra_text = f"{color_formatter.bold_number(extra_count)} {color_formatter.extra('extra')}"
         else:
-            status = "FAIL"
-            if dazzle_logger:
-                dazzle_logger.error(f"{status} {path}: {verified_count} verified, "
-                                  f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
-            else:
-                logger.error(f"{status} {path}: {verified_count} verified, "
-                           f"{failed_count} failed, {missing_count} missing, {extra_count} extra")
+            verified_text = f"{verified_count} verified"
+            failed_text = f"{failed_count} failed"
+            missing_text = f"{missing_count} missing"
+            extra_text = f"{extra_count} extra"
 
+        # Build complete summary line
+        summary = f"{colored_status} {path}: {verified_text}, {failed_text}, {missing_text}, {extra_text}"
+        
+        # Check squelch settings before displaying
+        should_display = True
+        
+        if squelch_settings:
+            # Check if FORCE_SUMMARY is set - this overrides hiding logic but respects category filtering
+            if squelch_settings.get('FORCE_SUMMARY', False):
+                # FORCE_SUMMARY overrides visibility hiding but respects category filtering
+                # Category filtering takes absolute priority - check independently
+                should_display = True  # Default to force display
+                
+                # Check SUCCESS squelching first (highest priority)
+                # SUCCESS includes both exit_code=0 (perfect) and exit_code=2 (with extras)
+                if 'SUCCESS' in status_text and squelch_settings.get('SUCCESS', False):
+                    should_display = False  # SUCCESS always squelched when SUCCESS=True
+                
+                # Check pure EXTRA-only squelching (if not already squelched by SUCCESS)
+                if should_display and (extra_count > 0 and failed_count == 0 and missing_count == 0 and verified_count == 0 and squelch_settings.get('EXTRA', False)):
+                    should_display = False  # Pure EXTRA-only squelched when EXTRA=True
+                
+                # Check EXTRA_SUMMARY squelching (if not already squelched)
+                if should_display and (extra_count > 0 and failed_count == 0 and missing_count == 0 and squelch_settings.get('EXTRA_SUMMARY', False)):
+                    should_display = False  # EXTRA_SUMMARY compressed display
+            # Check if SUMMARY (directory status lines) should be squelched
+            elif squelch_settings.get('SUMMARY', False):
+                should_display = False
+            # Check if this is a SUCCESS message that should be squelched
+            elif 'SUCCESS' in status_text and squelch_settings.get('SUCCESS', False):
+                # This is a SUCCESS (perfect or with extras) and SUCCESS is squelched
+                # But for auto-detected commands, always show the summary
+                if not is_auto_detected_command:
+                    should_display = False
+            else:
+                # Check if directory has only issues that are being squelched
+                # If all the issues in this directory are squelched, don't show status line
+                has_displayed_fails = failed_count > 0 and not squelch_settings.get('FAILS', False)
+                has_displayed_missing = missing_count > 0 and not squelch_settings.get('MISSING', False)
+                has_displayed_extra = extra_count > 0 and not squelch_settings.get('EXTRA', False)
+                
+                # If directory has no displayed issues, don't show status line (unless show_all is True or auto-detected)
+                # For auto-detected commands, always show the summary even for pure SUCCESS
+                if not has_displayed_fails and not has_displayed_missing and not has_displayed_extra and verified_count > 0 and not show_all and not is_auto_detected_command:
+                    should_display = False
+                # Special case: if directory only has EXTRA files and EXTRA_SUMMARY is squelched, hide status line
+                elif (has_displayed_extra and not has_displayed_fails and not has_displayed_missing and 
+                      failed_count == 0 and missing_count == 0 and squelch_settings.get('EXTRA_SUMMARY', False)):
+                    should_display = False
+        
+        # Log with appropriate level based on severity
+        if should_display:
+            if exit_code <= 2:  # Perfect or almost perfect
+                if dazzle_logger:
+                    dazzle_logger.info(summary, level=0)
+                else:
+                    logger.info(summary)
+            else:  # Has issues
+                if dazzle_logger:
+                    dazzle_logger.error(summary)
+                else:
+                    logger.error(summary)
+        
+        # Store exit code for main function to return
+        # We'll add this to a global variable or pass it through the call stack
+        global verification_exit_code
+        # Only set individual directory exit code if we're not tracking grand totals
+        # If we have grand totals, they will set the final exit code
+        if not grand_totals:
+            verification_exit_code = exit_code
+        
+        # Add results to grand totals if tracking
+        if grand_totals:
+            grand_totals.add_directory_result(results)
+        
+        # In quiet mode, add spacing after directories that produce output
+        if dazzle_logger and dazzle_logger.quiet:
+            # Check if this directory produced any output in quiet mode
+            # Consider squelch settings when determining what constitutes "problems"
+            showed_fails = failed_count > 0 and not (squelch_settings and squelch_settings.get('FAILS', False))
+            showed_missing = missing_count > 0 and not (squelch_settings and squelch_settings.get('MISSING', False))
+            showed_extra = extra_count > 0 and not (squelch_settings and squelch_settings.get('EXTRA', False))
+            has_problems = showed_fails or showed_missing or showed_extra
+            showed_summary = should_display and (exit_code > 2 or exit_code == 0 and not (squelch_settings and squelch_settings.get('SUCCESS', False)))
+            
+            if has_problems or showed_summary:
+                # This directory produced output, add spacing after it
+                print(file=sys.stderr)
+        
+        # Mark that we just processed a directory for spacing
+        if dazzle_logger:
+            dazzle_logger.last_was_directory = True
+
+
+class DetailedHelpAction(argparse.Action):
+    """Custom action to provide detailed help for specific topics."""
+    
+    def __init__(self, option_strings, dest, **kwargs):
+        super().__init__(option_strings, dest, nargs='?', const='general', **kwargs)
+    
+    def __call__(self, parser, namespace, values, option_string=None):
+        topic = values or 'general'
+        self.show_detailed_help(topic)
+        parser.exit()
+    
+    def show_detailed_help(self, topic):
+        """Show detailed help for specific topics."""
+        help_topics = {
+            'general': self._general_help,
+            'mode': self._mode_help,
+            'manage': self._manage_help,
+            'verify': self._verify_help,
+            'shadow': self._shadow_help,
+            'resume': self._resume_help,
+            'examples': self._examples_help
+        }
+        
+        if topic in help_topics:
+            help_topics[topic]()
+        else:
+            print(f"Unknown help topic: {topic}")
+            print(f"Available topics: {', '.join(help_topics.keys())}")
+    
+    def _general_help(self):
+        print("""
+Dazzle Cross-Platform Checksum Tool v{version}
+
+DESCRIPTION:
+    Generate and verify checksums for data integrity verification across
+    different machines and operating systems. Supports individual .shasum
+    files per directory, monolithic files for entire trees, and shadow
+    directories for clean source management.
+
+BASIC USAGE:
+    dazzlesum [OPTIONS] [DIRECTORY]
+
+COMMON WORKFLOWS:
+    dazzlesum                           # Generate checksums for current directory
+    dazzlesum -r                        # Generate recursively
+    dazzlesum -r --verify               # Verify existing checksums
+    dazzlesum -r --mode monolithic      # Single file for entire tree
+    dazzlesum -r --shadow-dir ./checks  # Keep source directories clean
+
+DETAILED HELP:
+    dazzlesum --detailed-help mode      # Help for --mode options
+    dazzlesum --detailed-help manage    # Help for --manage operations  
+    dazzlesum --detailed-help verify    # Help for verification options
+    dazzlesum --detailed-help shadow    # Help for shadow directories
+    dazzlesum --detailed-help resume    # Help for --resume feature
+    dazzlesum --detailed-help examples  # Comprehensive examples
+
+For complete argument list, use: dazzlesum --help
+        """.format(version=__version__))
+    
+    def _mode_help(self):
+        print("""
+--mode OPTION: Choose checksum generation strategy
+
+OPTIONS:
+    individual   Generate .shasum files in each directory (default)
+    monolithic   Generate single checksum file for entire tree
+    both         Generate both individual and monolithic files
+
+DETAILED EXPLANATION:
+
+individual mode (default):
+    Creates .shasum files in each processed directory
+    ├── dir1/
+    │   ├── file1.txt
+    │   ├── file2.txt
+    │   └── .shasum          ← checksums for file1.txt, file2.txt
+    └── dir2/
+        ├── file3.txt
+        └── .shasum          ← checksum for file3.txt
+
+monolithic mode:
+    Creates single checksum file with relative paths
+    ├── dir1/
+    │   ├── file1.txt
+    │   └── file2.txt
+    ├── dir2/
+    │   └── file3.txt
+    └── checksums.sha256     ← all checksums in one file
+    
+    Content format:
+    hash1  dir1/file1.txt
+    hash2  dir1/file2.txt  
+    hash3  dir2/file3.txt
+
+both mode:
+    Combines individual and monolithic approaches
+    Useful when you want flexibility for different verification scenarios
+
+EXAMPLES:
+    dazzlesum -r --mode individual      # Default behavior
+    dazzlesum -r --mode monolithic      # Single file approach
+    dazzlesum -r --mode both            # Maximum flexibility
+    dazzlesum -r --mode monolithic --output my-checksums.sha256  # Custom name
+
+REQUIREMENTS:
+    - monolithic and both modes require --recursive flag
+    - Use --output to specify custom monolithic filename
+        """)
+    
+    def _manage_help(self):
+        print("""
+--manage OPERATION: Manage existing .shasum files
+
+OPERATIONS:
+    backup    Copy all .shasum files to parallel directory structure
+    remove    Delete all .shasum files from directory tree
+    restore   Copy .shasum files back from backup location  
+    list      Show all .shasum files with details
+
+DETAILED EXPLANATION:
+
+backup operation:
+    Creates parallel directory structure with only .shasum files
+    Source:                    Backup:
+    /data/                     /backup/
+    ├── file1.txt              ├── .shasum
+    ├── .shasum                └── subdir/
+    └── subdir/                    └── .shasum
+        ├── file2.txt
+        └── .shasum
+
+remove operation:
+    Removes all .shasum files from directory tree
+    - Prompts for confirmation (use -y to skip)
+    - Use --dry-run to preview what would be removed
+    - Cannot be undone without backup
+
+restore operation:
+    Copies .shasum files from backup back to source locations
+    - Requires --backup-dir to specify backup location
+    - Creates directories as needed
+    - Overwrites existing .shasum files
+
+list operation:
+    Shows all .shasum files with metadata:
+    - File path and size
+    - Modification date
+    - Number of checksums in each file
+    - Summary statistics
+
+EXAMPLES:
+    dazzlesum -r --manage backup --backup-dir ./shasum-backup
+    dazzlesum -r --manage list
+    dazzlesum -r --manage remove --dry-run         # Preview only
+    dazzlesum -r --manage remove -y                # Skip confirmation
+    dazzlesum -r --manage restore --backup-dir ./shasum-backup
+
+REQUIREMENTS:
+    - backup and restore require --backup-dir
+    - All operations require --recursive for subdirectories
+        """)
+    
+    def _verify_help(self):
+        print("""
+VERIFICATION OPTIONS: Check data integrity
+
+--verify:
+    Verify existing checksums instead of generating new ones
+    
+--show-all-verifications:
+    Show all verification results, not just problems (default: problems only)
+
+VERIFICATION BEHAVIOR:
+
+Default (problems only):
+    Only shows failed, missing, or extra files
+    ERROR -   FAIL file1.txt: expected abc123... got def456...
+    WARNING - MISS file2.txt
+    WARNING - EXTRA file3.txt
+    INFO - OK /path: 98 verified, 1 failed, 1 missing, 1 extra
+
+With --show-all-verifications:
+    Shows every file verification result  
+    INFO -    OK file1.txt
+    INFO -    OK file2.txt
+    ERROR -   FAIL file3.txt: expected abc123... got def456...
+    INFO - OK /path: 2 verified, 1 failed, 0 missing, 0 extra
+
+VERIFICATION TYPES:
+
+Individual verification:
+    dazzlesum -r --verify
+    Looks for .shasum files in each directory
+
+Monolithic verification:
+    dazzlesum -r --verify --mode monolithic --output checksums.sha256
+    Verifies against single monolithic file
+
+Shadow directory verification:
+    dazzlesum -r --verify --shadow-dir ./checksums
+    Reads checksums from shadow directory structure
+
+Clone verification:
+    dazzlesum -r --verify --output ./backup/checksums.sha256 ./restored-data
+    Verify copied/restored data against original checksums
+    (Shows "Clone verification" message when source differs)
+
+EXAMPLES:
+    dazzlesum -r --verify                              # Standard verification
+    dazzlesum -r --verify --show-all-verifications     # Show all results
+    dazzlesum -r --verify -v                           # Verbose output
+    dazzlesum -r --verify --shadow-dir ./checksums     # Shadow verification
+        """)
+    
+    def _shadow_help(self):
+        print("""
+--shadow-dir DIRECTORY: Keep source directories clean
+
+CONCEPT:
+    Store checksum files in parallel "shadow" directory structure
+    instead of mixing them with your source files
+
+DIRECTORY STRUCTURE:
+
+Source (stays clean):        Shadow (contains checksums):
+/project/                    /checksums/
+├── src/                     ├── .shasum
+│   ├── main.py              ├── checksums.sha256      (if monolithic)
+│   └── utils.py             ├── src/
+├── docs/                    │   └── .shasum
+│   └── readme.md            └── docs/
+└── tests/                       └── .shasum
+    └── test_main.py
+
+BENEFITS:
+    - Source directories remain completely clean
+    - No .shasum files mixed with your data
+    - Perfect for version control (add shadow dir to .gitignore)
+    - Easy to backup checksums separately from data
+    - Supports all modes: individual, monolithic, both
+
+USE CASES:
+
+Git repositories:
+    dazzlesum -r --shadow-dir ./.checksums
+    echo ".checksums/" >> .gitignore
+
+Data backup workflows:
+    dazzlesum -r --mode both --shadow-dir ./verification
+    # Backup data separately from verification info
+
+Clone verification:
+    dazzlesum -r --mode monolithic --shadow-dir ./checks ./original
+    cp -r ./original ./copy
+    dazzlesum -r --verify --output ./checks/checksums.sha256 ./copy
+
+Network drives:
+    dazzlesum -r --shadow-dir ./local-checksums //server/share
+    # Store checksums locally for faster access
+
+EXAMPLES:
+    dazzlesum -r --shadow-dir ./checksums                    # Individual mode
+    dazzlesum -r --mode monolithic --shadow-dir ./checksums  # Monolithic mode
+    dazzlesum -r --mode both --shadow-dir ./checksums        # Both modes
+    dazzlesum -r --verify --shadow-dir ./checksums           # Verification
+        """)
+    
+    def _resume_help(self):
+        print("""
+--resume: Continue interrupted operations
+
+CONCEPT:
+    Resume checksum generation that was interrupted by system shutdown,
+    network issues, or user cancellation. Skips directories that have
+    already been processed.
+
+HOW IT WORKS:
+    - Detects existing .shasum files or monolithic entries
+    - Skips directories that appear complete
+    - Continues from where the operation left off
+    - Works with all modes: individual, monolithic, both
+
+RESUME CONDITIONS:
+
+Individual mode:
+    Skips directories that have .shasum files with recent timestamps
+    
+Monolithic mode:
+    Parses existing monolithic file and skips directories already included
+    Appends new entries to existing file
+
+Shadow directories:
+    Checks shadow location for existing checksums
+    Resumes based on shadow directory contents
+
+EXAMPLES:
+    dazzlesum -r --resume                               # Resume individual
+    dazzlesum -r --resume --mode monolithic             # Resume monolithic  
+    dazzlesum -r --resume --shadow-dir ./checksums      # Resume with shadow
+    dazzlesum -r --resume --mode both                   # Resume both modes
+
+SAFETY FEATURES:
+    - Never overwrites existing good checksums
+    - Validates partial files before resuming
+    - Can detect and handle corrupted resume state
+    - Use --verify after resume to ensure completeness
+
+LIMITATIONS:
+    - Cannot resume verification operations (only generation)
+    - Requires same algorithm as original operation
+    - Directory structure must not have changed significantly
+
+NOTE: Very large operations (millions of files) benefit most from resume capability
+        """)
+    
+    def _examples_help(self):
+        print("""
+COMPREHENSIVE EXAMPLES
+
+BASIC OPERATIONS:
+    dazzlesum                                    # Current directory
+    dazzlesum /path/to/data                      # Specific directory
+    dazzlesum -r                                 # Recursive processing
+    dazzlesum -r --algorithm sha512              # Different algorithm
+
+GENERATION MODES:
+    dazzlesum -r --mode individual               # .shasum in each directory (default)
+    dazzlesum -r --mode monolithic               # Single checksums.sha256 file  
+    dazzlesum -r --mode both                     # Both individual and monolithic
+    dazzlesum -r --mode monolithic --output my.sha256  # Custom monolithic name
+
+SHADOW DIRECTORIES:
+    dazzlesum -r --shadow-dir ./checksums        # Keep source clean
+    dazzlesum -r --mode both --shadow-dir ./verification  # Both modes in shadow
+
+VERIFICATION:
+    dazzlesum -r --verify                        # Verify existing checksums
+    dazzlesum -r --verify --show-all-verifications  # Show all files, not just problems
+    dazzlesum -r --verify --shadow-dir ./checksums  # Verify from shadow directory
+
+CLONE VERIFICATION:
+    # Generate checksums for original
+    dazzlesum -r --mode monolithic --shadow-dir ./backup-checks ./original-data
+    
+    # Create backup/copy  
+    cp -r ./original-data ./backup-data
+    
+    # Verify copy matches original
+    dazzlesum -r --verify --output ./backup-checks/checksums.sha256 ./backup-data
+
+MANAGEMENT OPERATIONS:
+    dazzlesum -r --manage backup --backup-dir ./shasum-archive    # Backup checksums
+    dazzlesum -r --manage list                                    # List all .shasum files
+    dazzlesum -r --manage remove --dry-run                       # Preview removal
+    dazzlesum -r --manage remove -y                              # Remove without confirmation
+    dazzlesum -r --manage restore --backup-dir ./shasum-archive  # Restore from backup
+
+LARGE DATASET OPERATIONS:
+    dazzlesum -r --mode monolithic --resume            # Resume interrupted operation
+    dazzlesum -r --summary                             # Progress bar for large ops
+    dazzlesum -r --quiet                               # Minimal output
+
+FILTERING:
+    dazzlesum -r --include "*.txt,*.doc"               # Only specific file types
+    dazzlesum -r --exclude "*.tmp,*.log,node_modules/**"  # Exclude patterns
+
+VERSION CONTROL INTEGRATION:
+    dazzlesum -r --shadow-dir ./.checksums             # Generate in shadow
+    echo ".checksums/" >> .gitignore                   # Ignore checksums in Git
+    dazzlesum -r --verify --shadow-dir ./.checksums    # Verify in CI/CD
+
+AUTOMATION:
+    dazzlesum -r --log verify.log                      # Log to file
+    dazzlesum -r -y --manage remove                    # Skip confirmations
+    dazzlesum -r --dry-run --manage remove             # Preview operations
+        """)
+
+
+class VerbosityHelpAction(argparse.Action):
+    """Custom action to provide detailed verbosity level explanation."""
+    
+    def __call__(self, parser, namespace, values, option_string=None):
+        print("""
+Verbosity Levels Explained:
+
+ULTRA QUIET:
+  -qqqqq (-5)  Silent mode - NO output, only exit codes
+               Perfect for CI/CD systems that only need pass/fail status
+  
+  -qqqq  (-4)  Ultra quiet - only grand totals  
+               Shows final summary statistics only
+  
+  -qqq   (-3)  Very quiet - only directory summaries
+               Shows directory result lines but no individual file details
+  
+QUIET:  
+  -qq    (-2)  Quiet - hide individual failure lines, show summaries only
+               Shows directory summaries but hides individual FAIL/MISS lines
+  
+  -q     (-1)  Minimal - hide EXTRA files, show FAIL/MISS only
+               Hides EXTRA files but shows failures and missing files
+  
+NORMAL:
+         (0)   Default - hide SUCCESS, show problems (current behavior)
+               Smart defaults: shows problems but hides successful verifications
+  
+VERBOSE:
+  -v     (+1)  Informative - show all results including SUCCESS
+               Shows everything including successful verifications
+  
+  -vv    (+2)  Verbose - show file processing + all results  
+               Shows file-by-file processing details and all results
+  
+  -vvv   (+3)  Very verbose - show debug information + processing details
+               Shows debug messages and internal processing information
+  
+  -vvvv  (+4)  Ultra verbose - show all internal operations
+               Shows everything including low-level internal operations
+
+EXAMPLES:
+  dazzlesum verify -r -qq          # Only directory summaries
+  dazzlesum verify -r -q -v        # -q + -v = 0 (default level)
+  dazzlesum verify -r --verbosity=-3  # Same as -qqq
+  dazzlesum verify -r -vv          # Show file processing details
+
+ALTERNATIVE SYNTAX:
+  --verbosity=-3    Same as -qqq
+  --verbosity=2     Same as -vv
+
+ENVIRONMENT VARIABLES:
+  DAZZLESUM_VERBOSITY=-1     Set default verbosity level
+  DAZZLESUM_SHOW_LOG_TYPES=1 Force log type prefixes to show
+
+The verbosity level is calculated as: base_level + verbose_count - quiet_count
+        """)
+        parser.exit()
+
+
+def show_verbosity_help():
+    """Show verbosity help as a top-level command (dazzlesum verbosity)."""
+    print("""
+Verbosity Levels Explained:
+
+ULTRA QUIET:
+  -qqqqqq (-6)  Silent mode - NO output, only exit codes
+                Perfect for CI/CD systems that only need pass/fail status
+  
+  -qqqqq  (-5)  Only grand totals - shows final summary statistics only
+                Hides all directory output, shows only aggregate results
+  
+  -qqqq   (-4)  Only info/status lines + grand totals
+                Shows directory summaries but no individual file details
+  
+  -qqq    (-3)  Shows FAIL + info/status lines + grand totals
+                Hides EXTRA, MISSING files; shows only failures
+  
+QUIET:  
+  -qq     (-2)  Shows MISSING + FAIL + info/status lines + grand totals
+                Hides EXTRA files; shows missing files and failures
+  
+  -q      (-1)  Shows EXTRA + MISSING + FAIL + info/status lines + grand totals
+                Shows all issues; hides only pure SUCCESS summaries (compressed EXTRA output)
+  
+NORMAL:
+          (0)   Default - shows NO_SHASUM + EXTRA + MISSING + FAIL + info/status + grand totals
+                Smart defaults: shows problems and "No .shasum file found" messages
+  
+VERBOSE:
+  -v      (+1)  Shows SUCCESS + NO_SHASUM + EXTRA + MISSING + FAIL + info/status + grand totals
+                Shows everything including successful directory verifications
+  
+  -vv     (+2)  Shows file processing details + all results + log type prefixes
+                Shows file-by-file processing and internal operations
+  
+  -vvv    (+3)  Shows debug information + processing details + log type prefixes
+                Shows debug messages and detailed internal information
+  
+  -vvvv   (+4)  Shows all internal operations + debug + log type prefixes
+                Shows everything including low-level internal operations
+
+EXAMPLES:
+  dazzlesum verify -r -qq          # Only MISSING/FAIL + summaries
+  dazzlesum verify -r -q -v        # -q + -v = 0 (default level)
+  dazzlesum verify -r --verbosity=-3  # Same as -qqq
+  dazzlesum verify -r -vv          # Show file processing details
+
+ALTERNATIVE SYNTAX:
+  --verbosity=-6    Same as -qqqqqq (silent mode)
+  --verbosity=-3    Same as -qqq
+  --verbosity=2     Same as -vv
+
+FINE-GRAINED CONTROL:
+  --squelch SUCCESS,EXTRA          # Manually hide specific categories
+  --squelch EXTRA_SUMMARY          # Hide status lines for EXTRA-only directories
+
+ENVIRONMENT VARIABLES:
+  DAZZLESUM_VERBOSITY=-1     Set default verbosity level
+  DAZZLESUM_SHOW_LOG_TYPES=1 Force log type prefixes to show
+
+The verbosity level is calculated as: base_level + verbose_count - quiet_count
+
+GLOBAL APPLICATION:
+The verbosity system works across ALL commands (create, verify, update, manage),
+not just verify. Each command may interpret verbosity levels slightly differently
+based on what operations they perform.
+    """)
+
+
+def create_parent_parser():
+    """Create parent parser with common arguments for all subcommands."""
+    parent = argparse.ArgumentParser(add_help=False)
+    
+    # Positional arguments
+    parent.add_argument('directory', nargs='?', default='.',
+                       help='Directory to process (default: current directory)')
+    
+    # Options that all subcommands share
+    parent.add_argument('-r', '--recursive', action='store_true',
+                       help='Process directories recursively')
+    parent.add_argument('-v', '--verbose', action='count', default=0,
+                       help='Increase verbosity (can be used multiple times: -v, -vv, -vvv, -vvvv)')
+    parent.add_argument('-q', '--quiet', action='count', default=0,
+                       help='Decrease verbosity (can be used multiple times: -q, -qq, -qqq, -qqqq, -qqqqq)')
+    parent.add_argument('--verbosity', type=int, metavar='LEVEL',
+                       help='Set verbosity level directly (-5 to +4, overrides -q/-v). Use "dazzlesum verbosity" for detailed help.')
+    parent.add_argument('--no-color', action='store_true',
+                       help='Disable colored output')
+    parent.add_argument('--show-log-types', action='store_true',
+                       help='Show log type prefixes (INFO, ERROR, WARNING)')
+    parent.add_argument('--algorithm', choices=SUPPORTED_ALGORITHMS,
+                       default=DEFAULT_ALGORITHM, help=f'Hash algorithm (default: {DEFAULT_ALGORITHM})')
+    parent.add_argument('--shadow-dir', metavar='DIR',
+                       help='Store checksums in parallel shadow directory')
+    parent.add_argument('--follow-symlinks', action='store_true',
+                       help='Follow symbolic links and junctions')
+    parent.add_argument('--line-endings', choices=['auto', 'unix', 'windows', 'preserve'],
+                       default='auto', help='Line ending handling strategy')
+    parent.add_argument('--force-python', action='store_true',
+                       help='Force Python implementation (skip native tools)')
+    parent.add_argument('-y', '--yes', action='store_true',
+                       help='Answer yes to all prompts')
+    
+    return parent
 
 def create_argument_parser():
-    """Create and configure argument parser."""
+    """Create main parser with subcommands."""
+    # Create parent parser with common arguments
+    parent = create_parent_parser()
+    
+    # Main parser WITHOUT promoted arguments (clean subparser approach)
     parser = argparse.ArgumentParser(
-        description="Dazzle Cross-Platform Checksum Tool",
+        prog='dazzlesum',
+        description='Dazzle Cross-Platform Checksum Tool',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                              # Current directory only
-  %(prog)s --recursive /path/to/dir     # Recursive processing
-  %(prog)s --algorithm sha512           # Use SHA-512
-  %(prog)s --verify                     # Verify existing checksums
-  %(prog)s --include "*.txt,*.doc"      # Include only specific patterns
-  %(prog)s --exclude "*.tmp,*.log"      # Exclude specific patterns
-  %(prog)s --recursive --mode monolithic # Single checksum file for tree
-  %(prog)s --recursive --mode both      # Both individual and monolithic files
-  %(prog)s --mode monolithic --output all.sha256  # Custom monolithic output
-  %(prog)s -r --manage backup --backup-dir ./backup  # Backup all .shasum files
-  %(prog)s -r --manage remove           # Remove all .shasum files
-  %(prog)s -r --manage restore --backup-dir ./backup # Restore from backup
-  %(prog)s -r --manage list             # List all .shasum files
-        """,
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+  %(prog)s create -r                                    # Generate checksums recursively
+  %(prog)s create -r --mode monolithic                  # Single checksum file for tree
+  %(prog)s create -r --mode monolithic --output backup.sha256  # Custom monolithic name
+  %(prog)s verify -r                                    # Verify existing checksums
+  %(prog)s verify -r -v                                 # Show all verification results including SUCCESS
+  %(prog)s verify -r -qq                                # Only show MISSING/FAIL + summaries
+  %(prog)s verify -r -qqqq                              # Ultra quiet - only directories with problems
+  %(prog)s update -r                                    # Update changed checksums
+  %(prog)s manage -r backup --backup-dir ./backup       # Backup all .shasum files
+  %(prog)s manage -r list                               # List all .shasum files
+  
+Verbosity Control (11 levels: -6 to +4):
+  %(prog)s verify -r -qqqqq                             # Silent mode - exit codes only (CI/CD)
+  %(prog)s verify -r -qqqq                              # Ultra quiet - only problem directories
+  %(prog)s verify -r -qq                                # Quiet - hide EXTRA files, show problems
+  %(prog)s verify -r                                    # Default - smart problem reporting
+  %(prog)s verify -r -v                                 # Verbose - show all results including SUCCESS
+  %(prog)s verify -r -vv                                # Show file-by-file processing details
+  %(prog)s verify -r --verbosity=-3                     # Direct level setting (same as -qqq)
+  
+Clone Verification Workflow:
+  %(prog)s create -r --mode monolithic /original/folder       # Generate checksums for original
+  cp -r /original/folder /clone/folder                         # Create clone
+  %(prog)s verify --checksum-file checksums.sha256 /clone/folder  # Verify clone matches original
+  
+Shadow Directory (keeps source clean):
+  %(prog)s create -r --shadow-dir ./checksums /data           # Generate in shadow
+  %(prog)s verify -r --shadow-dir ./checksums /data           # Verify from shadow
 
-    # Positional arguments
-    parser.add_argument('directory', nargs='?', default='.',
-                       help='Directory to process (default: current directory)')
+For detailed verbosity help: %(prog)s verbosity
+For detailed help on any command: %(prog)s <command> --help
+For comprehensive examples: %(prog)s examples
+        """)
+    
+    # Version at main level
+    parser.add_argument('--version', action='version', version=f'dazzlesum {__version__}')
+    
+    # Create subparsers
+    subparsers = parser.add_subparsers(dest='command', help='Available commands',
+                                     metavar='COMMAND', required=True)
+    
+    # CREATE subcommand with all its arguments
+    create_parser = subparsers.add_parser('create', parents=[parent],
+                                         help='Generate checksums for files',
+                                         description='Generate checksum files for directory contents')
+    create_parser.add_argument('--mode', choices=['individual', 'monolithic', 'both'],
+                              default='individual', help='Checksum generation mode (default: individual)')
+    create_parser.add_argument('--output', metavar='FILE',
+                              help='Output filename for monolithic mode')
+    create_parser.add_argument('--include', action='append', metavar='PATTERN',
+                              help='Include files matching pattern (can be used multiple times)')
+    create_parser.add_argument('--exclude', action='append', metavar='PATTERN',
+                              help='Exclude files matching pattern (can be used multiple times)')
+    create_parser.add_argument('--resume', action='store_true',
+                              help='Resume interrupted checksum generation')
+    create_parser.add_argument('--log', metavar='FILE',
+                              help='Write detailed log to file')
+    create_parser.add_argument('--summary', action='store_true',
+                              help='Show summary progress instead of detailed output')
+    
+    # VERIFY subcommand
+    verify_parser = subparsers.add_parser('verify', parents=[parent],
+                                         help='Verify existing checksums',
+                                         description='Verify file integrity against existing checksums')
+    verify_parser.add_argument('--show-all-verifications', action='store_true',
+                              help='Show all verification results, not just failures')
+    verify_parser.add_argument('--checksum-file', metavar='FILE',
+                              help='Monolithic checksum file to verify against')
+    # Keep --output for backwards compatibility with deprecation warning
+    verify_parser.add_argument('--output', metavar='FILE', dest='checksum_file',
+                              help=argparse.SUPPRESS)  # Hidden deprecated option
+    verify_parser.add_argument('--log', metavar='FILE',
+                              help='Write detailed log to file')
+    
+    # Output control options
+    verify_parser.add_argument('--squelch', metavar='CATEGORIES',
+                              help='Hide output categories: SUCCESS,NO_SHASUM,INFO,EXTRA,MISSING,FAILS,SUMMARY,EXTRA_SUMMARY (comma-separated)')
+    verify_parser.add_argument('--show-all', action='store_true',
+                              help='Show all results including successful verifications (legacy behavior)')
+    
+    # UPDATE subcommand
+    update_parser = subparsers.add_parser('update', parents=[parent],
+                                         help='Update existing checksums',
+                                         description='Update checksums for changed files')
+    update_parser.add_argument('--include', action='append', metavar='PATTERN',
+                              help='Include files matching pattern (can be used multiple times)')
+    update_parser.add_argument('--exclude', action='append', metavar='PATTERN',
+                              help='Exclude files matching pattern (can be used multiple times)')
+    update_parser.add_argument('--log', metavar='FILE',
+                              help='Write detailed log to file')
+    
+    # MANAGE subcommand
+    manage_parser = subparsers.add_parser('manage', parents=[parent],
+                                         help='Manage existing checksum files',
+                                         description='Backup, remove, restore, or list checksum files')
+    manage_parser.add_argument('operation', choices=['backup', 'remove', 'restore', 'list'],
+                              help='Management operation to perform')
+    manage_parser.add_argument('--backup-dir', metavar='DIR',
+                              help='Backup directory (required for backup/restore)')
+    manage_parser.add_argument('--dry-run', action='store_true',
+                              help='Show what would be done without making changes')
+    
+    # HELP-ONLY subcommands
+    mode_parser = subparsers.add_parser('mode', help='Detailed help for --mode parameter')
+    mode_parser.set_defaults(help_topic='mode')
+    
+    examples_parser = subparsers.add_parser('examples', help='Comprehensive usage examples')
+    examples_parser.set_defaults(help_topic='examples')
+    
+    shadow_parser = subparsers.add_parser('shadow', help='Detailed help for shadow directories')
+    shadow_parser.set_defaults(help_topic='shadow')
+    
+    verbosity_parser = subparsers.add_parser('verbosity', help='Detailed help for verbosity levels (-6 to +4)')
+    verbosity_parser.set_defaults(help_topic='verbosity')
+    
+    # Override format_help to show all available options in main help
+    original_format_help = parser.format_help
+    
+    def format_help_with_all_options():
+        help_text = original_format_help()
+        
+        # Add comprehensive options section
+        additional_help = """
+Common Options (available for all commands):
+  --algorithm {md5,sha1,sha256,sha512}
+                        Hash algorithm (default: sha256)
+  -r, --recursive       Process directories recursively
+  --follow-symlinks     Follow symbolic links and junctions
+  --shadow-dir DIR      Store checksums in parallel shadow directory
+  --line-endings {auto,unix,windows,preserve}
+                        Line ending handling strategy
+  -v, --verbose         Increase verbosity (can be used multiple times: -v, -vv, -vvv, -vvvv)
+  -q, --quiet           Decrease verbosity (can be used multiple times: -q, -qq, -qqq, -qqqq, -qqqqq)
+  --verbosity LEVEL     Set verbosity level directly (-6 to +4, overrides -q/-v)
+  --no-color            Disable colored output
+  --show-log-types      Show log type prefixes (INFO, ERROR, WARNING)
+  --force-python        Force Python implementation (skip native tools)
+  -y, --yes             Answer yes to all prompts
 
-    # Algorithm options
-    parser.add_argument('--algorithm', '-a', choices=SUPPORTED_ALGORITHMS,
-                       default=DEFAULT_ALGORITHM,
-                       help=f'Hash algorithm (default: {DEFAULT_ALGORITHM})')
-
-    # Processing options
-    parser.add_argument('--recursive', '-r', action='store_true',
-                       help='Process subdirectories recursively')
-    parser.add_argument('--follow-symlinks', action='store_true',
-                       help='Follow symbolic links and junctions')
-
-    # Operation modes
-    parser.add_argument('--verify', action='store_true',
-                       help='Verify existing checksums instead of generating')
-    parser.add_argument('--update', '-u', action='store_true',
-                       help='Update existing checksums (incremental)')
-
-    # Management operations (mutually exclusive with generation)
-    parser.add_argument('--manage', choices=['backup', 'remove', 'restore', 'list'],
-                       help='Manage existing .shasum files instead of generating new ones')
-    parser.add_argument('--backup-dir', metavar='DIR',
-                       help='Directory for .shasum backup/restore operations')
-    parser.add_argument('--dry-run', action='store_true',
-                       help='Show what would be done without actually doing it')
-
-    # Checksum generation mode
-    parser.add_argument('--mode', choices=['individual', 'monolithic', 'both'],
-                       default='individual',
-                       help='Checksum file generation mode (default: individual)')
-    parser.add_argument('--output', metavar='FILE',
-                       help='Output filename for monolithic mode or custom location')
-
-    # File filtering
-    parser.add_argument('--include', action='append',
-                       help='Include file patterns (can specify multiple)')
-    parser.add_argument('--exclude', action='append',
-                       help='Exclude file patterns (can specify multiple)')
-
-    # Line ending handling
-    parser.add_argument('--line-endings', choices=['auto', 'unix', 'windows', 'preserve'],
-                       default='auto', help='Line ending normalization strategy')
-
-    # Output options
-    parser.add_argument('--compatible', action='store_true',
-                       help='Generate output compatible with standard tools (no comments)')
-    parser.add_argument('-v', '--verbose', action='count', default=0,
-                       help='Increase verbosity level (use -v, -vv, or -vvv)')
-    parser.add_argument('--quiet', '-q', action='store_true',
-                       help='Suppress progress output (errors and warnings only)')
-    parser.add_argument('--log', metavar='FILE',
-                       help='Write detailed log to file')
-    parser.add_argument('--summary', action='store_true',
-                       help='Show progress bar and summary (less verbose console output)')
-
-    # Tool options
-    parser.add_argument('--force-python', action='store_true',
-                       help='Force use of Python implementation (skip native tools)')
-    parser.add_argument('-y', '--yes', action='store_true',
-                       help='Auto-accept prompts (assume --recursive for monolithic verify)')
-    parser.add_argument('--show-all-verifications', action='store_true',
-                       help='Show all verification results, not just problems (use with --verify)')
-
-    # Version
-    parser.add_argument('--version', action='version',
-                       version=f'%(prog)s {__version__}')
-
+Command-Specific Options:
+  create:
+    --mode {individual,monolithic,both}
+                        Checksum generation mode (default: individual)
+    --output FILE       Output filename for monolithic mode
+    --include PATTERN   Include files matching pattern (can be used multiple times)
+    --exclude PATTERN   Exclude files matching pattern (can be used multiple times)
+    --resume            Resume interrupted checksum generation
+    --log FILE          Write detailed log to file
+    --summary           Show summary progress instead of detailed output
+    
+  verify:
+    --show-all-verifications
+                        Show all verification results, not just failures
+    --checksum-file FILE    Monolithic checksum file to verify against
+    --squelch CATEGORIES    Hide output categories: SUCCESS,NO_SHASUM,INFO,EXTRA,MISSING,FAILS,SUMMARY,EXTRA_SUMMARY
+    --show-all          Show all results including successful verifications (legacy behavior)
+    --log FILE          Write detailed log to file
+    
+  update:
+    --include PATTERN   Include files matching pattern (can be used multiple times)
+    --exclude PATTERN   Exclude files matching pattern (can be used multiple times)
+    --log FILE          Write detailed log to file
+    
+  manage:
+    --backup-dir DIR    Backup directory (required for backup/restore)
+    --dry-run           Show what would be done without making changes
+"""
+        # Insert before the positional arguments section
+        return help_text.replace("\npositional arguments:", 
+                                additional_help + "\npositional arguments:")
+    
+    parser.format_help = format_help_with_all_options
     return parser
 
 
-def setup_logging(verbosity=0, quiet=False):
+def show_detailed_help(topic):
+    """Show detailed help for specific topics."""
+    if topic == 'mode':
+        print(get_mode_help())
+    elif topic == 'examples':
+        print(get_examples_help())
+    elif topic == 'shadow':
+        print(get_shadow_help())
+    else:
+        print(f"Unknown help topic: {topic}")
+        print("Available topics: mode, examples, shadow")
+
+def get_mode_help():
+    """Get detailed help for --mode parameter."""
+    return """--mode OPTION: Choose checksum generation strategy
+
+OPTIONS:
+    individual   Generate .shasum files in each directory (default)
+    monolithic   Generate single checksum file for entire tree
+    both         Generate both individual and monolithic files
+
+DETAILED EXPLANATION:
+
+individual mode (default):
+    Creates .shasum files in each processed directory
+    ├── dir1/
+    │   ├── file1.txt
+    │   ├── file2.txt
+    │   └── .shasum          ← checksums for file1.txt, file2.txt
+    └── dir2/
+        ├── file3.txt
+        └── .shasum          ← checksum for file3.txt
+
+monolithic mode:
+    Creates single checksum file with relative paths
+    ├── dir1/
+    │   ├── file1.txt
+    │   └── file2.txt
+    ├── dir2/
+    │   └── file3.txt
+    └── checksums.sha256     ← all checksums in one file
+    
+    Content format:
+    hash1  dir1/file1.txt
+    hash2  dir1/file2.txt  
+    hash3  dir2/file3.txt
+
+both mode:
+    Combines individual and monolithic approaches
+    Useful when you want flexibility for different verification scenarios
+
+EXAMPLES:
+    dazzlesum create -r --mode individual      # Default behavior
+    dazzlesum create -r --mode monolithic      # Single file approach
+    dazzlesum create -r --mode both            # Maximum flexibility
+    dazzlesum create -r --mode monolithic --output my-checksums.sha256  # Custom name
+
+REQUIREMENTS:
+    - monolithic and both modes require --recursive flag
+    - Use --output to specify custom monolithic filename"""
+
+def get_examples_help():
+    """Get comprehensive usage examples."""
+    return """COMPREHENSIVE EXAMPLES
+
+BASIC OPERATIONS:
+    dazzlesum create                                    # Current directory
+    dazzlesum create /path/to/data                      # Specific directory
+    dazzlesum create -r                                 # Recursive processing
+    dazzlesum create -r --algorithm sha512              # Different algorithm
+
+GENERATION MODES:
+    dazzlesum create -r --mode individual               # .shasum in each directory (default)
+    dazzlesum create -r --mode monolithic               # Single checksums.sha256 file  
+    dazzlesum create -r --mode both                     # Both individual and monolithic
+    dazzlesum create -r --mode monolithic --output my.sha256  # Custom monolithic name
+
+SHADOW DIRECTORIES:
+    dazzlesum create -r --shadow-dir ./checksums        # Keep source clean
+    dazzlesum create -r --mode both --shadow-dir ./verification  # Both modes in shadow
+
+VERIFICATION:
+    dazzlesum verify -r                                 # Verify all .shasum files
+    dazzlesum verify -r --show-all-verifications        # Show all results, not just failures
+    dazzlesum verify --output checksums.sha256 ./target # Verify against monolithic file
+
+UPDATING:
+    dazzlesum update -r                                 # Update changed files
+    dazzlesum update -r --include "*.txt"               # Update only specific patterns
+
+MANAGEMENT:
+    dazzlesum manage backup --backup-dir ./backup      # Backup all .shasum files
+    dazzlesum manage remove --dry-run                   # Preview removal
+    dazzlesum manage restore --backup-dir ./backup     # Restore from backup
+    dazzlesum manage list                               # List all .shasum files
+
+LARGE DATASET OPERATIONS:
+    dazzlesum create -r --mode monolithic --resume     # Resume interrupted operation
+    dazzlesum create -r --summary                      # Progress bar for large ops
+    dazzlesum create -r --quiet                        # Minimal output
+
+FILTERING:
+    dazzlesum create -r --include "*.txt,*.doc"        # Only specific file types
+    dazzlesum create -r --exclude "*.tmp,*.log,node_modules/**"  # Exclude patterns
+
+VERSION CONTROL INTEGRATION:
+    dazzlesum create -r --shadow-dir ./.checksums      # Generate in shadow
+    echo ".checksums/" >> .gitignore                   # Ignore checksums in Git
+    dazzlesum verify -r --shadow-dir ./.checksums      # Verify in CI/CD
+
+AUTOMATION:
+    dazzlesum create -r --log create.log               # Log to file
+    dazzlesum verify -r -y                             # Skip confirmations
+    dazzlesum manage remove -r --dry-run               # Preview operations
+
+MIGRATION FROM OLD SYNTAX:
+    OLD: dazzlesum -r --verify
+    NEW: dazzlesum verify -r
+    
+    OLD: dazzlesum -r --update  
+    NEW: dazzlesum update -r
+    
+    OLD: dazzlesum -r --mode monolithic
+    NEW: dazzlesum create -r --mode monolithic"""
+
+def get_shadow_help():
+    """Get detailed help for shadow directories."""
+    return """SHADOW DIRECTORIES: Keep Source Clean
+
+CONCEPT:
+    Shadow directories store all checksum files in a parallel directory
+    structure, keeping your source directories completely clean.
+
+STRUCTURE:
+    Source Directory (Clean)          Shadow Directory (Checksums)
+    /data/                           /checksums/
+    ├── file1.txt                    ├── .shasum                    
+    ├── file2.txt                    ├── checksums.sha256          
+    ├── folder1/                     ├── folder1/                   
+    │   └── file3.txt                │   └── .shasum               
+    └── folder2/                     └── folder2/                   
+        └── file4.txt                    └── .shasum               
+
+EXAMPLES:
+    dazzlesum create -r --shadow-dir ./checksums       # Generate to shadow
+    dazzlesum verify -r --shadow-dir ./checksums       # Verify from shadow
+    dazzlesum create -r --mode both --shadow-dir ./verification  # Both modes
+
+BENEFITS:
+    - Source directories remain completely clean
+    - Easy to backup/restore just checksums
+    - Perfect for version control (add shadow dir to .gitignore)
+    - Supports both individual and monolithic modes
+
+CLONE VERIFICATION:
+    dazzlesum create -r --shadow-dir ./checksums ./original
+    cp -r ./original ./clone
+    dazzlesum verify -r --shadow-dir ./checksums ./clone"""
+
+
+def execute_main_action(args, action):
+    """Execute the main action based on arguments and detected command."""
+    directory = Path(args.directory).resolve()
+    
+    if action == 'verify':
+        return execute_verify_action(args, directory)
+    elif action == 'update':
+        return execute_update_action(args, directory)
+    elif action == 'manage':
+        return execute_manage_action(args, directory)
+    else:  # create (default)
+        return execute_create_action(args, directory)
+
+def execute_create_action(args, directory):
+    """Execute create action."""
+    # Determine generation modes based on --mode
+    generate_individual = (args.mode in ['individual', 'both'])
+    generate_monolithic = (args.mode in ['monolithic', 'both'])
+    
+    # Set up generator for create mode
+    generator = ChecksumGenerator(
+        algorithm=args.algorithm,
+        line_ending_strategy=args.line_endings,
+        include_patterns=args.include or [],
+        exclude_patterns=args.exclude or [],
+        follow_symlinks=args.follow_symlinks,
+        log_file=args.log,
+        summary_mode=args.summary,
+        generate_individual=generate_individual,
+        generate_monolithic=generate_monolithic,
+        output_file=args.output,
+        shadow_dir=args.shadow_dir,
+        resume_mode=args.resume,
+        yes_to_all=args.yes
+    )
+    
+    # Force Python implementation if requested
+    if args.force_python:
+        generator.calculator.native_tool = None
+        if not args.summary:
+            logger.info("Forcing Python implementation")
+    
+    # Log generation mode
+    mode_descriptions = {
+        'individual': 'Individual .shasum files per directory',
+        'monolithic': 'Single monolithic checksum file',
+        'both': 'Both individual and monolithic files'
+    }
+    dazzle_logger.info(f"Mode: {mode_descriptions[args.mode]}", level=1)
+    
+    # Process directory tree
+    generator.process_directory_tree(directory, recursive=args.recursive)
+    return 0
+
+def execute_verify_action(args, directory):
+    """Execute verify action."""
+    # Auto-detect verification mode if no checksum file specified
+    output_file = getattr(args, 'checksum_file', None)
+    if not output_file:
+        # Use context detection to find appropriate checksum file
+        detected_file = auto_detect_checksum_file(directory)
+        if detected_file and is_monolithic_file(detected_file):
+            output_file = str(detected_file)
+            if dazzle_logger:
+                dazzle_logger.info(f"Auto-detected monolithic checksum file: {detected_file}", level=1)
+            else:
+                logger.info(f"Auto-detected monolithic checksum file: {detected_file}")
+    
+    # Set up generator for verify mode
+    generator = ChecksumGenerator(
+        algorithm=args.algorithm,
+        line_ending_strategy=args.line_endings,
+        follow_symlinks=args.follow_symlinks,
+        log_file=getattr(args, 'log', None),
+        summary_mode=False,  # Verify mode doesn't use summary
+        generate_individual=True,  # Verify needs to read individual files
+        generate_monolithic=bool(output_file),
+        output_file=output_file,
+        show_all_verifications=getattr(args, 'show_all_verifications', False) or getattr(args, 'show_all', False),
+        shadow_dir=args.shadow_dir,
+        yes_to_all=args.yes
+    )
+    
+    # Force Python implementation if requested
+    if args.force_python:
+        generator.calculator.native_tool = None
+        logger.info("Forcing Python implementation")
+    
+    # Squelch settings are initialized by the verbosity system
+    # Apply any explicit --squelch overrides on top of verbosity-based settings
+    global squelch_settings  # noqa: F824
+    
+    # If --show-all is used WITHOUT explicit --squelch, override SUCCESS squelching
+    if getattr(args, 'show_all', False) and not (hasattr(args, 'squelch') and args.squelch):
+        if squelch_settings:
+            squelch_settings['SUCCESS'] = False  # Show SUCCESS messages with --show-all
+    
+    # Apply explicit --squelch overrides (these take precedence over --show-all)
+    if hasattr(args, 'squelch') and args.squelch and squelch_settings:
+        squelch_categories = [cat.strip().upper() for cat in args.squelch.split(',')]
+        for category in squelch_categories:
+            if category in squelch_settings:
+                squelch_settings[category] = True
+    
+    # Process directory tree in verify mode
+    generator.process_directory_tree(directory, recursive=args.recursive, verify_only=True)
+    return 0
+
+def execute_update_action(args, directory):
+    """Execute update action."""
+    # Set up generator for update mode
+    generator = ChecksumGenerator(
+        algorithm=args.algorithm,
+        line_ending_strategy=args.line_endings,
+        include_patterns=args.include or [],
+        exclude_patterns=args.exclude or [],
+        follow_symlinks=args.follow_symlinks,
+        log_file=args.log,
+        summary_mode=False,
+        generate_individual=True,  # Update implies individual files
+        generate_monolithic=False,  # Update typically doesn't use monolithic
+        shadow_dir=args.shadow_dir,
+        yes_to_all=args.yes
+    )
+    
+    # Force Python implementation if requested
+    if args.force_python:
+        generator.calculator.native_tool = None
+        logger.info("Forcing Python implementation")
+    
+    # Process directory tree in update mode
+    generator.process_directory_tree(directory, recursive=args.recursive, update_mode=True)
+    return 0
+
+def execute_manage_action(args, directory):
+    """Execute manage action."""
+    # For manage operations, we need to handle the operation from the parsed args
+    # The manage subcommand structure should still work
+    if hasattr(args, 'operation'):
+        operation = args.operation
+    else:
+        # This shouldn't happen with proper subcommand structure
+        logger.error("Manage operation not specified")
+        return 1
+        
+    # Preserve existing manage functionality
+    manager = ShasumManager(
+        root_dir=directory,
+        backup_dir=Path(args.backup_dir) if getattr(args, 'backup_dir', None) else None,
+        dry_run=getattr(args, 'dry_run', False)
+    )
+    
+    if operation == 'backup':
+        if not getattr(args, 'backup_dir', None):
+            logger.error("--backup-dir is required for backup operation")
+            return 1
+        results = manager.backup_shasums()
+        return 1 if results.get('errors') else 0
+    elif operation == 'remove':
+        results = manager.remove_shasums(force=args.yes)
+        return 1 if results.get('errors') else 0
+    elif operation == 'restore':
+        if not getattr(args, 'backup_dir', None):
+            logger.error("--backup-dir is required for restore operation")
+            return 1
+        results = manager.restore_shasums()
+        return 1 if results.get('errors') else 0
+    elif operation == 'list':
+        results = manager.list_shasums()
+        # list_shasums returns a list, not a dict with errors
+        return 0
+    
+    return 1
+
+def setup_logging(verbosity=0, quiet=False, show_log_types=None):
     """Configure logging based on verbosity settings."""
     if quiet:
         level = logging.WARNING
@@ -1910,13 +3935,28 @@ def setup_logging(verbosity=0, quiet=False):
     # Configure root logger
     logging.getLogger().setLevel(level)
 
-    # Create a more detailed formatter for debug mode
+    # Determine if we should show log type prefixes
+    # Priority: explicit parameter > environment variable > verbosity-based default
+    if show_log_types is not None:
+        use_log_types = show_log_types
+    elif os.environ.get('DAZZLESUM_SHOW_LOG_TYPES', '').lower() in ('1', 'true', 'yes'):
+        use_log_types = True
+    else:
+        # Clean output by default (verbosity 0), show log types for higher verbosity
+        use_log_types = verbosity >= 1
+
+    # Create formatter based on verbosity and log type preferences
     if verbosity >= 3:
+        # Debug mode: full details including timestamps
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
         )
-    else:
+    elif use_log_types:
+        # Normal mode with log type prefixes
         formatter = logging.Formatter('%(levelname)s - %(message)s')
+    else:
+        # Clean mode: just the message
+        formatter = logging.Formatter('%(message)s')
 
     # Update handler formatter
     for handler in logging.getLogger().handlers:
@@ -1924,217 +3964,343 @@ def setup_logging(verbosity=0, quiet=False):
         handler.setLevel(level)
 
 
+def auto_detect_checksum_file(directory_path):
+    """Auto-detect the most appropriate checksum file in a directory.
+    
+    Returns:
+        Path: Path to the detected checksum file, or None if none found
+    """
+    try:
+        directory = Path(directory_path).resolve()
+        if not directory.is_dir():
+            return None
+            
+        # Priority 1: Check for individual .shasum files
+        shasum_file = directory / SHASUM_FILENAME
+        if shasum_file.exists():
+            return shasum_file
+            
+        # Priority 2: Check for common monolithic checksum file patterns
+        checksum_patterns = [
+            f'checksums.{alg}' for alg in SUPPORTED_ALGORITHMS
+        ] + [
+            'checksums',
+            'CHECKSUMS', 
+            'SHA256SUMS', 
+            'MD5SUMS',
+            'SHA1SUMS',
+            'SHA512SUMS'
+        ]
+        
+        for pattern in checksum_patterns:
+            potential_file = directory / pattern
+            if potential_file.exists() and potential_file.is_file():
+                # Use existing is_monolithic_file function to verify it's actually a checksum file
+                if is_monolithic_file(potential_file):
+                    return potential_file
+                    
+        # Priority 3: Check for any other files that might be monolithic checksum files
+        # Look for common checksum file extensions
+        for file_path in directory.iterdir():
+            if file_path.is_file():
+                name = file_path.name.lower()
+                # Check files with common checksum extensions
+                if (name.endswith(('.sha256', '.sha1', '.sha512', '.md5')) or
+                        'checksum' in name or 'hash' in name):
+                    if is_monolithic_file(file_path):
+                        return file_path
+                        
+    except Exception:
+        pass
+    return None
+
+def detect_context_command(directory_path='.'):
+    """Detect the appropriate command based on existing files in directory.
+    
+    Returns:
+        str: 'verify' if .shasum files or monolithic checksum files exist, 'create' otherwise
+    """
+    detected_file = auto_detect_checksum_file(directory_path)
+    return 'verify' if detected_file else 'create'
+
+
+def calculate_verification_status(verified_count, failed_count, missing_count, extra_count):
+    """Calculate status label and exit code based on verification results.
+    
+    Args:
+        verified_count: Number of files that verified successfully
+        failed_count: Number of files that failed checksum verification
+        missing_count: Number of missing files
+        extra_count: Number of extra files found
+        
+    Returns:
+        tuple: (status_label, exit_code, success_percentage, failure_percentage)
+    """
+    total_expected = verified_count + failed_count + missing_count
+    
+    # Handle edge case where no files were expected
+    if total_expected == 0:
+        if extra_count > 0:
+            return "0%/100% UNEXPECTED FILES", 4, 0, 100
+        else:
+            return "100%/0% SUCCESS", 0, 100, 0
+    
+    # Calculate success/failure percentages
+    # Consider missing and failed files as failures
+    failure_count = failed_count + missing_count
+    success_percentage = round((verified_count / total_expected) * 100)
+    failure_percentage = round((failure_count / total_expected) * 100)
+    
+    # Determine status label and exit code based on success rate
+    if success_percentage == 100 and extra_count == 0:
+        status_label = "SUCCESS"
+        exit_code = 0
+    elif success_percentage == 100 and extra_count > 0:
+        status_label = "SUCCESS"  # All expected files verified, but has extras
+        exit_code = 2  # Not perfect due to extra files
+    elif success_percentage >= 99:
+        status_label = "ALMOST PERFECT"
+        exit_code = 2
+    elif success_percentage >= 95:
+        status_label = "SOME ISSUES"
+        exit_code = 3
+    elif success_percentage >= 80:
+        status_label = "FAILS"
+        exit_code = 4
+    elif success_percentage >= 50:
+        status_label = "MANY FAILS"
+        exit_code = 5
+    elif success_percentage > 0:
+        status_label = "MOSTLY FAILS"
+        exit_code = 6
+    else:
+        status_label = "FAILURE"
+        exit_code = 7
+    
+    return f"{success_percentage}%/{failure_percentage}% {status_label}", exit_code, success_percentage, failure_percentage
+
+
+def format_status_with_colors(status_text, success_percentage, failure_percentage):
+    """Apply colors to status text with green success % and red failure %.
+    
+    Args:
+        status_text: Full status text like "99%/1% ALMOST PERFECT"
+        success_percentage: Success percentage (0-100)
+        failure_percentage: Failure percentage (0-100)
+        
+    Returns:
+        Colored status text if colors enabled, otherwise plain text
+    """
+    if not color_formatter or not color_formatter.use_colors:
+        return status_text
+    
+    # Split the status text to colorize percentages
+    parts = status_text.split('%')
+    if len(parts) >= 3:
+        # Format: "99%/1% STATUS"
+        success_part = f"{parts[0]}%"
+        failure_part = f"{parts[1].split('/')[1]}%"
+        status_label = parts[2]
+        
+        colored_success = color_formatter.success(success_part)
+        colored_failure = color_formatter.error(failure_part)
+        
+        return f"{colored_success}/{colored_failure}{status_label}"
+    
+    # Fallback to original text if parsing fails
+    return status_text
+
 def main():
-    """Main entry point."""
+    """Main entry point with subcommand handling and context detection."""
+    global is_auto_detected_command
     try:
         parser = create_argument_parser()
+        
+        # Handle help-only commands early
+        if len(sys.argv) > 1 and sys.argv[1] in ['mode', 'examples', 'shadow', 'verbosity']:
+            if sys.argv[1] == 'verbosity':
+                show_verbosity_help()
+                return 0
+            else:
+                show_detailed_help(sys.argv[1])
+                return 0
+        
+        # Handle default behavior with context detection
+        if len(sys.argv) > 1:
+            first_arg = sys.argv[1]
+            
+            if not first_arg.startswith('-') and first_arg not in ['create', 'verify', 'update', 'manage', 'mode', 'examples', 'shadow']:
+                # First argument is likely a directory, detect appropriate command
+                detected_command = detect_context_command(first_arg)
+                sys.argv.insert(1, detected_command)
+                logger.info(f"Context-aware: executing '{detected_command} {first_arg}'")
+                is_auto_detected_command = True
+        elif len(sys.argv) == 1:
+            # No arguments at all, detect command for current directory
+            detected_command = detect_context_command('.')
+            sys.argv.extend([detected_command, '.'])
+            logger.info(f"Context-aware: executing '{detected_command} .'")
+            is_auto_detected_command = True
+            if detected_command == 'verify':
+                # Smart default: only show all verifications for small datasets
+                # For large monolithic files, use compact format
+                detected_file = auto_detect_checksum_file('.')
+                if detected_file and is_monolithic_file(detected_file):
+                    # Count entries in monolithic file to decide format
+                    try:
+                        with open(detected_file, 'r', encoding='utf-8') as f:
+                            entry_count = 0
+                            for line in f:
+                                line = line.strip()
+                                if line and not line.startswith('#'):
+                                    entry_count += 1
+                                    if entry_count > 50:  # Stop counting after threshold
+                                        break
+                        
+                        # Only add --show-all-verifications for small datasets
+                        if entry_count <= 50:
+                            sys.argv.append('--show-all-verifications')
+                    except Exception:
+                        # If we can't read the file, default to compact format
+                        pass
+                else:
+                    # For individual .shasum files, always show all verifications
+                    sys.argv.append('--show-all-verifications')
+        
+        # Parse arguments normally
         args = parser.parse_args()
-
-        # Validate argument combinations
-        if args.summary and args.verbose > 0:
-            logger.error("Cannot use --summary and --verbose together")
+        
+        # Handle verbosity configuration early
+        global verbosity_config
+        verbosity_config = VerbosityConfig.from_environment()
+        verbosity_config = VerbosityConfig.from_args(args)
+        
+        # Initialize squelch settings from verbosity
+        initialize_squelch_from_verbosity(verbosity_config.get_effective_level())
+        
+        # Check if we have a command
+        if not hasattr(args, 'command') or args.command is None:
+            parser.print_help()
+            return 1  # Informational
+            
+        # Handle help topics that set help_topic attribute
+        if hasattr(args, 'help_topic'):
+            show_detailed_help(args.help_topic)
+            return 1  # Informational
+        
+        # Validate directory early
+        directory = Path(args.directory).resolve()
+        if not directory.exists():
+            logger.error(f"Directory does not exist: {directory}")
             return 1
-
-        if args.summary and args.quiet:
-            logger.error("Cannot use --summary and --quiet together")
+        if not directory.is_dir():
+            logger.error(f"Path is not a directory: {directory}")
             return 1
-
-        # Validate mode requirements
-        if args.mode in ['monolithic', 'both'] and not args.recursive and not args.verify:
-            logger.error("Monolithic modes require --recursive flag")
-            return 1
-
-        # Validate management operation requirements
-        if args.manage:
-            if args.manage in ['backup', 'restore'] and not args.backup_dir:
-                logger.error(f"--backup-dir is required for --manage {args.manage}")
+        
+        # Validate argument combinations based on command
+        if args.command == 'create':
+            if args.summary and args.verbose > 0:
+                logger.error("Cannot use --summary and --verbose together")
                 return 1
-            if args.verify or args.update:
-                logger.error("--manage cannot be used with --verify or --update")
+            if args.summary and args.quiet > 0:
+                logger.error("Cannot use --summary and --quiet together")
                 return 1
-
-        # Setup logging
-        setup_logging(args.verbose, args.quiet or args.summary)
-
-        # Initialize enhanced logger
-        global dazzle_logger
+            
+            # Validate mode requirements
+            if args.mode in ['monolithic', 'both'] and not args.recursive:
+                print(f"Monolithic mode works by creating a single checksum file for the entire directory tree.")
+                print(f"This requires recursive processing of subdirectories.")
+                print(f"")
+                # Filter out problematic arguments for suggestions
+                filtered_args = [arg for arg in sys.argv[2:] if arg not in ['--mode', 'monolithic']]
+                # Remove any --mode argument and its value
+                clean_args = []
+                skip_next = False
+                for arg in filtered_args:
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    if arg == '--mode':
+                        skip_next = True
+                        continue
+                    clean_args.append(arg)
+                
+                args_str = ' '.join(clean_args)
+                print(f"If you want to create individual .shasum files per directory instead:")
+                print(f"  dazzlesum create {args_str} --mode individual")
+                print(f"")
+                print(f"If you want a custom-named checksum file for just this directory:")
+                print(f"  dazzlesum create {args_str} --output custom-name.sha256")
+                print(f"")
+                try:
+                    response = input("Do you want to proceed with recursive monolithic mode? (y/N): ").strip().lower()
+                    if response in ['y', 'yes']:
+                        args.recursive = True
+                        print("Proceeding with recursive monolithic mode...")
+                    else:
+                        print("Operation cancelled. Use --help for more options.")
+                        return 0
+                except (KeyboardInterrupt, EOFError):
+                    print("\nOperation cancelled.")
+                    return 0
+        
+        # Set up logging and global state
+        # Only pass show_log_types if explicitly set, otherwise let verbosity config decide
+        show_log_types = getattr(args, 'show_log_types', False) if hasattr(args, 'show_log_types') and args.show_log_types else None
+        
+        # Use verbosity config for logging setup
+        effective_quiet = verbosity_config.get_effective_level() < 0 or (args.command == 'create' and args.summary)
+        setup_logging(args.verbose, effective_quiet, show_log_types)
+        
+        global dazzle_logger, color_formatter
         dazzle_logger = DazzleLogger(
             verbosity=args.verbose,
-            quiet=args.quiet,
-            summary_mode=args.summary
+            quiet=effective_quiet,
+            summary_mode=(args.command == 'create' and args.summary),
+            show_log_types=verbosity_config.should_show_log_types() if show_log_types is None else show_log_types
         )
-
-        # Log startup info
-        dazzle_logger.info(f"Dazzle Checksum Tool v{__version__}", level=0)
-
+        
+        # Set verbosity config in logger
+        dazzle_logger.set_verbosity_config(verbosity_config)
+        
+        # Initialize color formatter
+        use_colors = None if not getattr(args, 'no_color', False) else False
+        color_formatter = ColorFormatter(use_colors=use_colors)
+        
+        # Log startup info (skip in silent mode)
+        if not (verbosity_config and verbosity_config.is_silent()):
+            dazzle_logger.info(f"Dazzle Checksum Tool v{__version__}", level=0)
+        
         if args.verbose >= 3:
             dazzle_logger.debug(f"Platform: {platform.platform()}")
             dazzle_logger.debug(f"Python: {platform.python_version()}")
             dazzle_logger.debug(f"UNCtools available: {HAVE_UNCTOOLS}")
             dazzle_logger.debug(f"is_windows(): {is_windows()}")
-
-        # Validate directory
-        directory = Path(args.directory).resolve()
-        if not directory.exists():
-            logger.error(f"Directory does not exist: {directory}")
-            return 1
-
-        if not directory.is_dir():
-            logger.error(f"Path is not a directory: {directory}")
-            return 1
-
-        # Handle management operations (mutually exclusive with generation)
-        if args.manage:
-            dazzle_logger.info(f"Starting {args.manage} operation on {directory}")
-
-            manager = ShasumManager(
-                root_dir=directory,
-                backup_dir=Path(args.backup_dir) if args.backup_dir else None,
-                dry_run=args.dry_run
-            )
-
-            try:
-                if args.manage == 'backup':
-                    results = manager.backup_shasums()
-                    if results['errors']:
-                        return 1
-
-                elif args.manage == 'remove':
-                    results = manager.remove_shasums(force=args.yes)
-                    if results['errors']:
-                        return 1
-
-                elif args.manage == 'restore':
-                    results = manager.restore_shasums()
-                    if results['errors']:
-                        return 1
-
-                elif args.manage == 'list':
-                    results = manager.list_shasums()
-
-                dazzle_logger.info(f"Management operation '{args.manage}' completed successfully")
-                return 0
-
-            except Exception as e:
-                logger.error(f"Management operation failed: {e}")
-                if args.verbose >= 3:
-                    import traceback
-                    logger.debug(traceback.format_exc())
-                return 1
-
-        # Handle smart monolithic verification logic
-        if args.mode in ['monolithic', 'both'] and args.verify and not args.recursive:
-            # Check for monolithic file
-            if args.output:
-                monolithic_file = Path(args.output)
-                if not monolithic_file.is_absolute():
-                    monolithic_file = directory / monolithic_file
-            else:
-                # Try .shasum first, then default monolithic name
-                shasum_file = directory / SHASUM_FILENAME
-                default_mono = directory / f"{MONOLITHIC_DEFAULT_NAME}.{args.algorithm}"
-
-                if shasum_file.exists() and is_monolithic_file(shasum_file):
-                    monolithic_file = shasum_file
-                elif default_mono.exists():
-                    monolithic_file = default_mono
-                else:
-                    dazzle_logger.error(f"No monolithic checksum file found in {directory}")
-                    dazzle_logger.info("Looked for: .shasum (monolithic) or checksums.{algorithm}")
-                    return 1
-
-            if monolithic_file.exists() and is_monolithic_file(monolithic_file):
-                if not args.yes:
-                    dazzle_logger.warning("Monolithic file detected - this implies --recursive verification")
-                    dazzle_logger.info("Use -y/--yes to auto-accept, or add --recursive manually")
-                    response = input("Continue with recursive verification? [y/N]: ")
-                    if response.lower() not in ['y', 'yes']:
-                        dazzle_logger.info("Verification cancelled")
-                        return 0
-
-                # Auto-enable recursive for monolithic verification
-                args.recursive = True
-                dazzle_logger.info("Auto-enabled --recursive for monolithic verification")
-
-        # Process include/exclude patterns
-        include_patterns = []
-        if args.include:
-            for pattern_group in args.include:
-                include_patterns.extend(p.strip() for p in pattern_group.split(','))
-
-        exclude_patterns = []
-        if args.exclude:
-            for pattern_group in args.exclude:
-                exclude_patterns.extend(p.strip() for p in pattern_group.split(','))
-
-        # Determine generation modes based on --mode
-        generate_individual = False
-        generate_monolithic = False
-
-        if args.mode == 'individual':
-            generate_individual = True
-        elif args.mode == 'monolithic':
-            generate_monolithic = True
-        elif args.mode == 'both':
-            generate_individual = True
-            generate_monolithic = True
-
-        # Create checksum generator
-        generator = ChecksumGenerator(
-            algorithm=args.algorithm,
-            line_ending_strategy=args.line_endings,
-            include_patterns=include_patterns,
-            exclude_patterns=exclude_patterns,
-            follow_symlinks=args.follow_symlinks,
-            log_file=args.log,
-            summary_mode=args.summary,
-            generate_individual=generate_individual,
-            generate_monolithic=generate_monolithic,
-            output_file=args.output,
-            show_all_verifications=args.show_all_verifications
-        )
-
-        # Force Python implementation if requested
-        if args.force_python:
-            generator.calculator.native_tool = None
-            if not args.summary:
-                logger.info("Forcing Python implementation")
-
-        # Log generation mode if not verifying
-        if not args.verify:
-            mode_descriptions = {
-                'individual': 'Individual .shasum files per directory',
-                'monolithic': 'Single monolithic checksum file',
-                'both': 'Both individual and monolithic files'
-            }
-            dazzle_logger.info(f"Mode: {mode_descriptions[args.mode]}", level=1)
-
-        # Process directory tree
-        generator.process_directory_tree(
-            directory,
-            recursive=args.recursive,
-            verify_only=args.verify,
-            update_mode=args.update
-        )
-
-        if not args.summary:
-            logger.info("Processing completed successfully")
-
-        return 0
-
+        
+        # Execute the appropriate action based on command
+        global verification_exit_code
+        verification_exit_code = 0  # Reset for each run
+        result = execute_main_action(args, args.command)
+        
+        # For verification commands, return the calculated exit code
+        if args.command == 'verify' and verification_exit_code > 0:
+            return verification_exit_code
+        
+        return result
+        
     except KeyboardInterrupt:
-        print()  # New line after progress bar if interrupted
+        print()
         logger.info("Operation interrupted by user")
-        return 130  # Standard exit code for Ctrl+C
+        return 130
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         # Show traceback in verbose mode if args is available
         try:
-            if args.verbose >= 3:
+            if hasattr(locals().get('args'), 'verbose') and args.verbose >= 3:
                 import traceback
                 logger.debug(traceback.format_exc())
-        except NameError:
-            # args not available, show traceback anyway for debugging
+        except Exception:
+            # Fallback for debugging
             import traceback
             logger.debug(traceback.format_exc())
         return 1

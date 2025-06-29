@@ -1,7 +1,7 @@
 # Dazzlesum
 
 [![GitHub Workflow Status](https://github.com/djdarcy/dazzlesum/actions/workflows/python.yml/badge.svg)](https://github.com/djdarcy/dazzlesum/actions)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/djdarcy/dazzlesum/releases/tag/v1.1.0)
+[![Version](https://img.shields.io/badge/version-1.3.5-blue.svg)](https://github.com/djdarcy/dazzlesum/releases/tag/v1.3.5)
 [![Python Version](https://img.shields.io/badge/python-%3E%3D3.7-brightgreen)](https://python.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
@@ -17,6 +17,7 @@ Dazzlesum is a handy checksum tool designed for data integrity verification acro
 - **Advanced Verification**: Problems-only output shows only failed, missing, or extra files by default
 - **Management Operations**: Backup, remove, restore, and list `.shasum` files with comprehensive metadata
 - **Enhanced Logging**: Multiple verbosity levels with visual directory separation and progress tracking
+- **Shadow Directory Support**: Keep source directories clean by storing checksum files in parallel shadow structure
 
 ## Use Cases
 
@@ -71,55 +72,91 @@ pip install -e ".[dev,test,docs]"
 
 ## Quick Start
 
-### Generate checksums
+### Generate checksums (using new subcommand syntax)
 
 ```bash
 # Generate checksums for current directory
-dazzlesum
+dazzlesum create
 
 # Generate checksums recursively
-dazzlesum -r
+dazzlesum create -r
 
 # Create monolithic checksum file
-dazzlesum -r --mode monolithic
+dazzlesum create -r --mode monolithic
 
 # Generate with verbose output
-dazzlesum -r -vv
+dazzlesum create -r -vv
+
+# Keep source directories clean with shadow directory
+dazzlesum create -r --shadow-dir ./checksums
+
+# Generate monolithic checksum in shadow directory
+dazzlesum create -r --mode monolithic --shadow-dir ./checksums
 ```
 
 ### Verify checksums
 
 ```bash
 # Verify existing checksums
-dazzlesum -r --verify
+dazzlesum verify -r
 
 # Verify with detailed output
-dazzlesum -r --verify -v
+dazzlesum verify -r -v
 
 # Show all verification results
-dazzlesum -r --verify --show-all-verifications
+dazzlesum verify -r --show-all-verifications
+
+# Verify checksums stored in shadow directory
+dazzlesum verify -r --shadow-dir ./checksums
+```
+
+### Update checksums
+
+```bash
+# Update existing checksums for changed files
+dazzlesum update -r
+
+# Update only specific file types
+dazzlesum update -r --include "*.txt,*.doc"
 ```
 
 ### Manage checksum files
 
 ```bash
 # Backup all .shasum files
-dazzlesum -r --manage backup --backup-dir ./checksum-backup
+dazzlesum manage -r backup --backup-dir ./checksum-backup
 
 # List all .shasum files with details
-dazzlesum -r --manage list
+dazzlesum manage -r list
 
 # Remove all .shasum files (with confirmation)
-dazzlesum -r --manage remove
+dazzlesum manage -r remove
 
 # Restore from backup
-dazzlesum -r --manage restore --backup-dir ./checksum-backup
+dazzlesum manage -r restore --backup-dir ./checksum-backup
+```
+
+### Get help
+
+```bash
+# General help
+dazzlesum --help
+
+# Help for specific commands
+dazzlesum create --help
+dazzlesum verify --help
+
+# Detailed help topics
+dazzlesum mode        # Help for --mode parameter
+dazzlesum examples    # Comprehensive usage examples
+dazzlesum shadow      # Shadow directory help
 ```
 
 ## Documentation
 
 - **[Installation Guide](docs/installation.md)** - Detailed installation instructions for all platforms
 - **[Usage Examples](docs/usage-examples.md)** - Practical examples for common use cases
+- **[Shadow Directory Guide](docs/shadow-directory.md)** - Complete guide to shadow directory operations
 - **[Command Reference](docs/command-reference.md)** - Complete command-line reference
 - **[File Formats](docs/file-formats.md)** - Details about `.shasum` file formats and compatibility
 
@@ -151,7 +188,6 @@ dazzlesum -r --manage restore --backup-dir ./checksum-backup
 - **Optional**: [`unctools` package](https://github.com/djdarcy/UNCtools) for enhanced Windows UNC path support
 
 ## Future Possible Features
-- **Shadow Directory Support**: Parallel verification directories
 - **Incremental Updates**: Smart update detection
 - **Compression**: Archive support for checksum collections
 - **Remote Storage**: Cloud backup integration? (maybe)
@@ -186,4 +222,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
 
 ---
 
-Made with ❤️ for reliable, consistent data integrity verification across all platforms.
+Made with ️☕. Designed for reliable, consistent data integrity verification across all platforms.

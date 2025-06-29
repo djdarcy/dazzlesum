@@ -74,6 +74,25 @@ jobs:
       with:
         python-version: 3.11
     
+    - name: Generate Build Version
+      id: version
+      run: |
+        # Extract base version from dazzlesum.py
+        BASE_VERSION=$(grep -E "MAJOR, MINOR, PATCH = [0-9, ]+$" dazzlesum.py | sed 's/.*= //' | tr -d ' ' | tr ',' '.')
+        BUILD_DATE=$(date +%Y%m%d)
+        COMMIT_HASH=$(git rev-parse --short=8 HEAD)
+        BUILD_NUMBER=$(git rev-list --count HEAD)
+        
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          VERSION="${BASE_VERSION}_${BUILD_NUMBER}-${BUILD_DATE}-${COMMIT_HASH}-pr"
+        else
+          VERSION="${BASE_VERSION}_${BUILD_NUMBER}-${BUILD_DATE}-${COMMIT_HASH}"
+        fi
+        
+        echo "VERSION=${VERSION}" >> $GITHUB_ENV
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "Building version: ${VERSION}"
+    
     - name: Install build dependencies
       run: |
         python -m pip install --upgrade pip
@@ -81,6 +100,7 @@ jobs:
     
     - name: Build package
       run: |
+        export DAZZLESUM_VERSION="${{ env.VERSION }}"
         python -m build
     
     - name: Check package
@@ -91,4 +111,5 @@ jobs:
     - name: Test installation
       run: |
         pip install dist/*.whl
+        dazzlesum --version
         dazzlesum --help
