@@ -178,3 +178,4 @@ private/docs/
 private/temp/
 dazzlesum_backup_*/
 .shasum
+checksums.sha256

@@ -261,6 +261,13 @@ class TestSquelchAndGrandTotals(unittest.TestCase):
         
         result = self.run_dazzlesum(["verify", "-r", str(self.test_path)], expect_success=False)
         
+        # DEBUG: Print actual output to understand what's happening
+        print(f"\n--- DEBUG INFO ---")
+        print(f"Exit code: {result.returncode}")
+        print(f"STDERR:\n{result.stderr}")
+        print(f"STDOUT:\n{result.stdout}")
+        print(f"--- END DEBUG ---\n")
+        
         # With our test data:
         # - 4 verified, 2 failed, 1 missing, 1 extra = 8 total expected files
         # - 4 verified out of 7 actual files (4+2+1) = 57% success 
