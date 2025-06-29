@@ -17,15 +17,15 @@ import dazzlesum
 class TestVersioningSystem(unittest.TestCase):
     """Test the automated versioning system."""
 
-    def test_version_format_development(self):
-        """Test that development version follows expected format."""
+    def test_version_format_static(self):
+        """Test that static version follows expected format."""
         version = dazzlesum.__version__
         
         # Should be string
         self.assertIsInstance(version, str)
         
         if '_' in version:
-            # Development build: 1.3.0_33-20250629-9938568e-dev
+            # Static build: 1.3.0_36-20250629-2109774a
             base, build_info = version.split('_', 1)
             
             # Base version should be semantic
@@ -34,23 +34,22 @@ class TestVersioningSystem(unittest.TestCase):
             for part in parts:
                 self.assertTrue(part.isdigit())
             
-            # Build info should match pattern: Build#-YYYYMMDD-CommitHash[-dev]
-            self.assertRegex(build_info, r'^\d+-\d{8}-[a-f0-9]{8}')
+            # Build info should match pattern: Build#-YYYYMMDD-CommitHash
+            self.assertRegex(build_info, r'^\d+-\d{8}-[a-f0-9]{8}[a-f0-9]*$')
             
-            # Should end with -dev for development builds (when not in CI)
-            if not (os.environ.get('CI') or os.environ.get('GITHUB_ACTIONS')):
-                self.assertTrue(build_info.endswith('-dev'))
+            # Should NOT end with -dev for static builds
+            self.assertFalse(build_info.endswith('-dev'))
         else:
             # Fallback version: 1.3.0
             parts = version.split('.')
             self.assertGreaterEqual(len(parts), 3)
 
-    def test_version_ci_injection(self):
-        """Test that CI environment variable injection works."""
+    def test_static_version_immutable(self):
+        """Test that static version is not affected by environment variables."""
         # Save original version
         original_version = dazzlesum.__version__
         
-        # Test CI injection
+        # Test that CI injection doesn't affect static version
         test_version = "1.4.0_50-20250630-abcd1234"
         os.environ['DAZZLESUM_VERSION'] = test_version
         
@@ -58,11 +57,12 @@ class TestVersioningSystem(unittest.TestCase):
         from importlib import reload
         reload(dazzlesum)
         
-        # Should use injected version
-        self.assertEqual(dazzlesum.__version__, test_version)
+        # Should still use static version (not injected)
+        self.assertEqual(dazzlesum.__version__, original_version)
         
         # Cleanup
-        del os.environ['DAZZLESUM_VERSION']
+        if 'DAZZLESUM_VERSION' in os.environ:
+            del os.environ['DAZZLESUM_VERSION']
         reload(dazzlesum)
 
     def test_version_components_accessible(self):
