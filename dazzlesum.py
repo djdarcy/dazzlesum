@@ -46,10 +46,10 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 
 # Version information
 # Base semantic version (manually maintained for git hooks)
-MAJOR, MINOR, PATCH = 1, 3, 4
+MAJOR, MINOR, PATCH = 1, 3, 5
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.4_55-20250629-51f8c74f"
+__version__ = "1.3.5_56-20250629-b17396ae"
 
 def get_package_version():
     """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
