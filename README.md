@@ -1,7 +1,7 @@
 # Dazzlesum
 
 [![GitHub Workflow Status](https://github.com/djdarcy/dazzlesum/actions/workflows/python.yml/badge.svg)](https://github.com/djdarcy/dazzlesum/actions)
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/djdarcy/dazzlesum/releases/tag/v1.3.0)
+[![Version](https://img.shields.io/badge/version-1.3.4-blue.svg)](https://github.com/djdarcy/dazzlesum/releases/tag/v1.3.4)
 [![Python Version](https://img.shields.io/badge/python-%3E%3D3.7-brightgreen)](https://python.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
@@ -222,4 +222,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
 
 ---
 
-Made with ️☕ for reliable, consistent data integrity verification across all platforms.
+Made with ️☕. Designed for reliable, consistent data integrity verification across all platforms.

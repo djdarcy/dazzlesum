@@ -49,7 +49,7 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 MAJOR, MINOR, PATCH = 1, 3, 4
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.4_49-20250629-f0738834"
+__version__ = "1.3.4_50-20250629-1f461e54"
 
 def get_package_version():
     """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
@@ -479,7 +479,7 @@ class VerbosityConfig:
 
 def initialize_squelch_from_verbosity(verbosity_level):
     """Set global squelch_settings based on verbosity level."""
-    global squelch_settings
+    global squelch_settings  # noqa: F824
     
     if verbosity_config:
         squelch_settings = verbosity_config.get_squelch_settings()
@@ -598,7 +598,7 @@ class GrandTotals:
     
     def display_grand_totals(self):
         """Display the grand totals summary."""
-        global verbosity_config
+        global verbosity_config  # noqa: F824
         if not dazzle_logger:
             return
             
@@ -2624,7 +2624,7 @@ class ChecksumGenerator:
 
     def _print_verification_results(self, path: Path, results: Dict[str, Any], show_all=False):
         """Print verification results for a directory or monolithic file."""
-        global squelch_settings, verbosity_config
+        global squelch_settings, verbosity_config  # noqa: F824
         
         # Check for silent mode first - no output at all
         if verbosity_config and verbosity_config.is_silent():
@@ -3744,7 +3744,6 @@ CLONE VERIFICATION:
     dazzlesum verify -r --shadow-dir ./checksums ./clone"""
 
 
-
 def execute_main_action(args, action):
     """Execute the main action based on arguments and detected command."""
     directory = Path(args.directory).resolve()
@@ -3835,7 +3834,7 @@ def execute_verify_action(args, directory):
     
     # Squelch settings are initialized by the verbosity system
     # Apply any explicit --squelch overrides on top of verbosity-based settings
-    global squelch_settings
+    global squelch_settings  # noqa: F824
     
     # If --show-all is used WITHOUT explicit --squelch, override SUCCESS squelching
     if getattr(args, 'show_all', False) and not (hasattr(args, 'squelch') and args.squelch):
