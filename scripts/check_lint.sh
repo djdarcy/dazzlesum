@@ -7,14 +7,18 @@ if [[ "$1" == "--strict" ]]; then
 fi
 
 echo "Running flake8 linting check..."
-if python3 -m flake8 dazzlesum.py tests/ --exclude=tests/test_runs/; then
+# Match CI behavior: use --count flag which exits with error count
+if python3 -m flake8 dazzlesum.py tests/ --exclude=tests/test_runs/ --count --statistics; then
     echo "✅ Flake8 check passed!"
 else
+    EXIT_CODE=$?
     if [[ "$STRICT_MODE" == "true" ]]; then
-        echo "❌ Flake8 check failed (strict mode)!"
-        exit 1
+        echo "❌ Flake8 check failed (strict mode)! Exit code: $EXIT_CODE"
+        exit $EXIT_CODE
     else
-        echo "⚠️ Flake8 issues found (non-strict mode)"
+        echo "⚠️ Flake8 issues found (non-strict mode) - Exit code: $EXIT_CODE"
+        # In non-strict mode for dev branch, we don't fail
+        # But we should ensure developers see the issues
     fi
 fi
 
