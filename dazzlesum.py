@@ -49,7 +49,7 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 MAJOR, MINOR, PATCH = 1, 3, 3
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.3_15-20250627-78f1de28"
+__version__ = "1.3.3_44-20250627-7372c71f"
 
 def get_package_version():
     """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
