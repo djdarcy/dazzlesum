@@ -46,10 +46,15 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 
 # Version information
 # Base semantic version (manually maintained for git hooks)
-MAJOR, MINOR, PATCH = 1, 3, 2
+MAJOR, MINOR, PATCH = 1, 3, 3
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.2_41-20250629-654f264d"
+__version__ = "1.3.3_42-20250629-79eebece"
+
+def get_package_version():
+    """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
+    return f"{MAJOR}.{MINOR}.{PATCH}"
+
 __author__ = "Dustin Darcy"
 
 # Try to import unctools for enhanced path handling
