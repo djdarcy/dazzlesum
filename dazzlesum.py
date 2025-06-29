@@ -46,10 +46,10 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 
 # Version information
 # Base semantic version (manually maintained for git hooks)
-MAJOR, MINOR, PATCH = 1, 3, 3
+MAJOR, MINOR, PATCH = 1, 3, 4
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.3_45-20250629-e7fd13ae"
+__version__ = "1.3.4_46-20250629-94ffbfbb"
 
 def get_package_version():
     """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
@@ -447,12 +447,12 @@ class VerbosityConfig:
         # Note: True means squelched (hidden), False means shown
         VERBOSITY_SQUELCH_MAP = {
             -6: {'show_output': False},  # Special case: no output at all, only exit codes
-            -5: {'INFO': True, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': True, 'MISSING': True, 'FAILS': True, 'SUMMARY': True},   # Only grand total summary
-            -4: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': True, 'MISSING': True, 'FAILS': True, 'SUMMARY': False, 'FORCE_SUMMARY': True},  # info/status line + grand total
-            -3: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': True, 'MISSING': True, 'FAILS': False, 'SUMMARY': False},  # FAIL + info/status + grand total
-            -2: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': True, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # MISSING + FAIL + info/status + grand total
-            -1: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},  # EXTRA + MISSING + FAIL + info/status + grand total
-            0: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Current default
+            -5: {'INFO': True,  'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': True},   # Only grand total summary  # noqa: E241
+            -4: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': False, 'FORCE_SUMMARY': True},  # info/status line + grand total  # noqa: E241
+            -3: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': False, 'SUMMARY': False},  # FAIL + info/status + grand total  # noqa: E241
+            -2: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # MISSING + FAIL + info/status + grand total  # noqa: E241
+            -1: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},  # EXTRA + MISSING + FAIL + info/status + grand total  # noqa: E241
+             0: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Current default  # noqa: E241,E131
             +1: {'INFO': False, 'SUCCESS': False, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Show everything
             # +2 and above: controlled by logger verbosity, not squelch
         }
@@ -1935,7 +1935,7 @@ class ChecksumGenerator:
         self.algorithm = algorithm.lower()
         self.calculator = DazzleHashCalculator(algorithm, line_ending_strategy)
         self.include_patterns = include_patterns or []
-        self.exclude_patterns = exclude_patterns or [SHASUM_FILENAME, STATE_FILENAME]
+        self.exclude_patterns = exclude_patterns or [SHASUM_FILENAME, STATE_FILENAME, '*.tmp']
         self.follow_symlinks = follow_symlinks
         self.log_file = log_file
         self.summary_mode = summary_mode
@@ -2696,8 +2696,8 @@ class ChecksumGenerator:
                 has_displayed_missing = missing_count > 0 and not squelch_settings.get('MISSING', False)
                 has_displayed_extra = extra_count > 0 and not squelch_settings.get('EXTRA', False)
                 
-                # If directory has no displayed issues, don't show status line
-                if not has_displayed_fails and not has_displayed_missing and not has_displayed_extra and verified_count > 0:
+                # If directory has no displayed issues, don't show status line (unless show_all is True)
+                if not has_displayed_fails and not has_displayed_missing and not has_displayed_extra and verified_count > 0 and not show_all:
                     should_display = False
                 # Special case: if directory only has EXTRA files and EXTRA_SUMMARY is squelched, hide status line
                 elif (has_displayed_extra and not has_displayed_fails and not has_displayed_missing and 
@@ -3735,7 +3735,7 @@ def handle_verify_command(args):
         generate_individual=True,  # Verify needs to read individual files
         generate_monolithic=bool(output_file),
         output_file=output_file,
-        show_all_verifications=getattr(args, 'show_all_verifications', False),
+        show_all_verifications=getattr(args, 'show_all_verifications', False) or getattr(args, 'show_all', False),
         shadow_dir=args.shadow_dir
     )
     
@@ -3743,6 +3743,22 @@ def handle_verify_command(args):
     if args.force_python:
         generator.calculator.native_tool = None
         logger.info("Forcing Python implementation")
+    
+    # Squelch settings are initialized by the verbosity system
+    # Apply any explicit --squelch overrides on top of verbosity-based settings
+    global squelch_settings
+    
+    # If --show-all is used WITHOUT explicit --squelch, override SUCCESS squelching
+    if getattr(args, 'show_all', False) and not (hasattr(args, 'squelch') and args.squelch):
+        if squelch_settings:
+            squelch_settings['SUCCESS'] = False  # Show SUCCESS messages with --show-all
+    
+    # Apply explicit --squelch overrides (these take precedence over --show-all)
+    if hasattr(args, 'squelch') and args.squelch and squelch_settings:
+        squelch_categories = [cat.strip().upper() for cat in args.squelch.split(',')]
+        for category in squelch_categories:
+            if category in squelch_settings:
+                squelch_settings[category] = True
     
     # Process directory tree in verify mode
     directory = Path(args.directory).resolve()
@@ -3883,7 +3899,7 @@ def execute_verify_action(args, directory):
         generate_individual=True,  # Verify needs to read individual files
         generate_monolithic=bool(output_file),
         output_file=output_file,
-        show_all_verifications=getattr(args, 'show_all_verifications', False),
+        show_all_verifications=getattr(args, 'show_all_verifications', False) or getattr(args, 'show_all', False),
         shadow_dir=args.shadow_dir
     )
     
@@ -3895,6 +3911,13 @@ def execute_verify_action(args, directory):
     # Squelch settings are initialized by the verbosity system
     # Apply any explicit --squelch overrides on top of verbosity-based settings
     global squelch_settings
+    
+    # If --show-all is used WITHOUT explicit --squelch, override SUCCESS squelching
+    if getattr(args, 'show_all', False) and not (hasattr(args, 'squelch') and args.squelch):
+        if squelch_settings:
+            squelch_settings['SUCCESS'] = False  # Show SUCCESS messages with --show-all
+    
+    # Apply explicit --squelch overrides (these take precedence over --show-all)
     if hasattr(args, 'squelch') and args.squelch and squelch_settings:
         squelch_categories = [cat.strip().upper() for cat in args.squelch.split(',')]
         for category in squelch_categories:

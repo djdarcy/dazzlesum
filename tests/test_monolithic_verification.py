@@ -192,6 +192,9 @@ class TestMonolithicVerification(unittest.TestCase):
         missing_files = []
         for line in lines:
             expected_hash, filename = line.split('  ', 1)
+            # Skip temporary files
+            if filename.endswith('.tmp'):
+                continue
             file_path = self.clone_dir / filename
             
             if not file_path.exists():
@@ -270,7 +273,7 @@ class TestMonolithicVerification(unittest.TestCase):
         # Verify it contains all expected files
         content = mono_file.read_text()
         data_lines = [line for line in content.split('\n') 
-                     if line and not line.startswith('#')]
+                     if line and not line.startswith('#') and not line.endswith('.tmp')]
         
         # Should have 50 files (10 dirs * 5 files)
         self.assertEqual(len(data_lines), 50)

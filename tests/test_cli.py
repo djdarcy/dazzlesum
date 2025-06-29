@@ -56,8 +56,8 @@ class TestCLIInterface(unittest.TestCase):
     def test_version_command(self):
         """Test version command."""
         result = self.run_dazzlesum(["--version"])
-        # Should contain base version 1.3.0, possibly with build info
-        self.assertIn("1.3.0", result.stdout)
+        # Match semantic version pattern dynamically
+        self.assertRegex(result.stdout, r'dazzlesum \d+\.\d+\.\d+(_\d+-\d{8}-[a-f0-9]{8})?')
     
     def test_create_subcommand_help(self):
         """Test create subcommand help."""
@@ -143,11 +143,11 @@ class TestCLIInterface(unittest.TestCase):
         
         # Then verify them
         mono_file = self.test_dir / "checksums.sha256"
-        result = self.run_dazzlesum(["verify", "--checksum-file", str(mono_file), str(self.test_dir)], expect_success=False)
-        # Note: This test expects exit code 5 due to the temporary file being included in checksums
-        # but not present during verification. This is a known behavior.
-        self.assertEqual(result.returncode, 5)  # MANY FAILS due to missing .tmp file
-        self.assertIn("verified", result.stderr)  # But the actual files are verified
+        result = self.run_dazzlesum(["verify", "--checksum-file", str(mono_file), "--show-all", str(self.test_dir)], expect_success=False)
+        # Note: This test now expects exit code 0 since .tmp files are excluded from checksums
+        # This is the correct behavior - temporary files should not be checksummed.
+        self.assertEqual(result.returncode, 0)  # SUCCESS since .tmp files are now excluded
+        self.assertIn("OK", result.stderr)  # Files are verified successfully
     
     def test_deprecated_syntax_rejected(self):
         """Test that old syntax is no longer supported."""

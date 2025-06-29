@@ -56,15 +56,15 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
             sys.executable, str(self.dazzlesum_path)  # No arguments - should auto-detect
         ], capture_output=True, text=True, cwd=self.test_path)
         
-        # Note: Expect exit code 5 (MANY FAILS) due to temporary file included in monolithic checksums
-        self.assertEqual(result.returncode, 5, f"Auto-detection verify failed: {result.stderr}")
+        # Note: Expect exit code 0 (SUCCESS) since .tmp files are now excluded from checksums
+        self.assertEqual(result.returncode, 0, f"Auto-detection verify failed: {result.stderr}")
         
         # Check that verification was successful for actual files
         self.assertIn("Context-aware: executing 'verify .'", result.stderr)
         self.assertIn("file1.txt", result.stderr)
         self.assertIn("file2.txt", result.stderr)
-        self.assertIn("verified", result.stderr)
-        self.assertIn("MISS", result.stderr)  # Should show missing .tmp file
+        self.assertIn("OK", result.stderr)
+        # No longer expecting missing .tmp file since they're excluded from checksums
 
     def test_verify_explicit_command_with_auto_detection(self):
         """Test that explicit verify command also uses auto-detection."""
@@ -79,16 +79,17 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
         # Test explicit verify command without --output
         result = subprocess.run([
             sys.executable, str(self.dazzlesum_path),
-            "verify", str(self.test_path)
+            "verify", "--show-all", str(self.test_path)
         ], capture_output=True, text=True, cwd=self.test_path)
         
-        # Note: Expect exit code 5 (MANY FAILS) due to temporary file included in monolithic checksums
-        self.assertEqual(result.returncode, 5, f"Explicit verify failed: {result.stderr}")
+        # Note: Expect exit code 0 (SUCCESS) since .tmp files are now excluded from checksums
+        self.assertEqual(result.returncode, 0, f"Explicit verify failed: {result.stderr}")
         
         # Check that verification was successful for actual files (look for verified count)
-        self.assertIn("verified", result.stderr)
-        # Should show successful verification (2 files verified)
-        self.assertIn("2 verified", result.stderr)
+        self.assertIn("OK", result.stderr)
+        # Should show successful verification (OK messages for files)
+        self.assertIn("file1.txt", result.stderr)
+        self.assertIn("file2.txt", result.stderr)
 
     def test_priority_individual_over_monolithic_integration(self):
         """Test that individual .shasum files take priority in actual verification."""
@@ -109,8 +110,8 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
             sys.executable, str(self.dazzlesum_path)
         ], capture_output=True, text=True, cwd=self.test_path)
         
-        # Note: Expect exit code 5 due to extra files when using individual verification
-        self.assertEqual(result.returncode, 5, f"Priority verification failed: {result.stderr}")
+        # Note: Expect exit code 2 (SUCCESS_WITH_EXTRA) since monolithic file is treated as extra
+        self.assertEqual(result.returncode, 2, f"Priority verification failed: {result.stderr}")
         
         # Should use individual verification (evident by the format of output)
         # Individual verification shows files without full paths
@@ -137,8 +138,8 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
             sys.executable, str(self.dazzlesum_path)
         ], capture_output=True, text=True, cwd=self.test_path)
         
-        # Note: Expect exit code 5 (MANY FAILS) due to temporary file included in monolithic checksums
-        self.assertEqual(result.returncode, 5, f"Custom filename auto-detection failed: {result.stderr}")
+        # Note: Expect exit code 0 (SUCCESS) since .tmp files are now excluded from checksums
+        self.assertEqual(result.returncode, 0, f"Custom filename auto-detection failed: {result.stderr}")
         
         # Verification should work for actual files
         self.assertIn("file1.txt", result.stderr)
