@@ -49,7 +49,7 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 MAJOR, MINOR, PATCH = 1, 3, 4
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.4_46-20250629-94ffbfbb"
+__version__ = "1.3.4_47-20250629-be010be8"
 
 def get_package_version():
     """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
@@ -393,6 +393,9 @@ color_formatter = None
 
 # Global exit code for verification operations - will be set by verification results
 verification_exit_code = 0
+
+# Global flag to track if this is an auto-detected command
+is_auto_detected_command = False
 
 # Global verbosity configuration instance
 verbosity_config = None
@@ -1935,7 +1938,16 @@ class ChecksumGenerator:
         self.algorithm = algorithm.lower()
         self.calculator = DazzleHashCalculator(algorithm, line_ending_strategy)
         self.include_patterns = include_patterns or []
-        self.exclude_patterns = exclude_patterns or [SHASUM_FILENAME, STATE_FILENAME, '*.tmp']
+        self.exclude_patterns = exclude_patterns or [SHASUM_FILENAME, STATE_FILENAME]
+        
+        # For monolithic mode, also exclude the temporary file that will be created
+        if generate_monolithic:
+            if output_file:
+                temp_filename = Path(output_file).name + '.tmp'
+            else:
+                temp_filename = f"{MONOLITHIC_DEFAULT_NAME}.{self.algorithm}.tmp"
+            self.exclude_patterns.append(temp_filename)
+        
         self.follow_symlinks = follow_symlinks
         self.log_file = log_file
         self.summary_mode = summary_mode
@@ -2688,7 +2700,9 @@ class ChecksumGenerator:
             # Check if this is a SUCCESS message that should be squelched
             elif 'SUCCESS' in status_text and squelch_settings.get('SUCCESS', False):
                 # This is a SUCCESS (perfect or with extras) and SUCCESS is squelched
-                should_display = False
+                # But for auto-detected commands, always show the summary
+                if not is_auto_detected_command:
+                    should_display = False
             else:
                 # Check if directory has only issues that are being squelched
                 # If all the issues in this directory are squelched, don't show status line
@@ -2696,8 +2710,9 @@ class ChecksumGenerator:
                 has_displayed_missing = missing_count > 0 and not squelch_settings.get('MISSING', False)
                 has_displayed_extra = extra_count > 0 and not squelch_settings.get('EXTRA', False)
                 
-                # If directory has no displayed issues, don't show status line (unless show_all is True)
-                if not has_displayed_fails and not has_displayed_missing and not has_displayed_extra and verified_count > 0 and not show_all:
+                # If directory has no displayed issues, don't show status line (unless show_all is True or auto-detected)
+                # For auto-detected commands, always show the summary even for pure SUCCESS
+                if not has_displayed_fails and not has_displayed_missing and not has_displayed_extra and verified_count > 0 and not show_all and not is_auto_detected_command:
                     should_display = False
                 # Special case: if directory only has EXTRA files and EXTRA_SUMMARY is squelched, hide status line
                 elif (has_displayed_extra and not has_displayed_fails and not has_displayed_missing and 
@@ -4182,6 +4197,7 @@ def format_status_with_colors(status_text, success_percentage, failure_percentag
 
 def main():
     """Main entry point with subcommand handling and context detection."""
+    global is_auto_detected_command
     try:
         parser = create_argument_parser()
         
@@ -4203,11 +4219,13 @@ def main():
                 detected_command = detect_context_command(first_arg)
                 sys.argv.insert(1, detected_command)
                 logger.info(f"Context-aware: executing '{detected_command} {first_arg}'")
+                is_auto_detected_command = True
         elif len(sys.argv) == 1:
             # No arguments at all, detect command for current directory
             detected_command = detect_context_command('.')
             sys.argv.extend([detected_command, '.'])
             logger.info(f"Context-aware: executing '{detected_command} .'")
+            is_auto_detected_command = True
             if detected_command == 'verify':
                 # Smart default: only show all verifications for small datasets
                 # For large monolithic files, use compact format
@@ -4275,8 +4293,41 @@ def main():
             
             # Validate mode requirements
             if args.mode in ['monolithic', 'both'] and not args.recursive:
-                logger.error("Monolithic modes require --recursive flag")
-                return 1
+                print(f"Monolithic mode works by creating a single checksum file for the entire directory tree.")
+                print(f"This requires recursive processing of subdirectories.")
+                print(f"")
+                # Filter out problematic arguments for suggestions
+                filtered_args = [arg for arg in sys.argv[2:] if arg not in ['--mode', 'monolithic']]
+                # Remove any --mode argument and its value
+                clean_args = []
+                skip_next = False
+                for arg in filtered_args:
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    if arg == '--mode':
+                        skip_next = True
+                        continue
+                    clean_args.append(arg)
+                
+                args_str = ' '.join(clean_args)
+                print(f"If you want to create individual .shasum files per directory instead:")
+                print(f"  dazzlesum create {args_str} --mode individual")
+                print(f"")
+                print(f"If you want a custom-named checksum file for just this directory:")
+                print(f"  dazzlesum create {args_str} --output custom-name.sha256")
+                print(f"")
+                try:
+                    response = input("Do you want to proceed with recursive monolithic mode? (y/N): ").strip().lower()
+                    if response in ['y', 'yes']:
+                        args.recursive = True
+                        print("Proceeding with recursive monolithic mode...")
+                    else:
+                        print("Operation cancelled. Use --help for more options.")
+                        return 0
+                except (KeyboardInterrupt, EOFError):
+                    print("\nOperation cancelled.")
+                    return 0
         
         # Set up logging and global state
         # Only pass show_log_types if explicitly set, otherwise let verbosity config decide

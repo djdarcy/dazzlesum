@@ -56,7 +56,7 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
             sys.executable, str(self.dazzlesum_path)  # No arguments - should auto-detect
         ], capture_output=True, text=True, cwd=self.test_path)
         
-        # Note: Expect exit code 0 (SUCCESS) since .tmp files are now excluded from checksums
+        # Note: .tmp files are now excluded from monolithic checksums, so should succeed
         self.assertEqual(result.returncode, 0, f"Auto-detection verify failed: {result.stderr}")
         
         # Check that verification was successful for actual files
@@ -64,7 +64,6 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
         self.assertIn("file1.txt", result.stderr)
         self.assertIn("file2.txt", result.stderr)
         self.assertIn("OK", result.stderr)
-        # No longer expecting missing .tmp file since they're excluded from checksums
 
     def test_verify_explicit_command_with_auto_detection(self):
         """Test that explicit verify command also uses auto-detection."""
@@ -82,7 +81,7 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
             "verify", "--show-all", str(self.test_path)
         ], capture_output=True, text=True, cwd=self.test_path)
         
-        # Note: Expect exit code 0 (SUCCESS) since .tmp files are now excluded from checksums
+        # Note: .tmp files are now excluded from monolithic checksums, so should succeed
         self.assertEqual(result.returncode, 0, f"Explicit verify failed: {result.stderr}")
         
         # Check that verification was successful for actual files (look for verified count)
@@ -110,13 +109,15 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
             sys.executable, str(self.dazzlesum_path)
         ], capture_output=True, text=True, cwd=self.test_path)
         
-        # Note: Expect exit code 2 (SUCCESS_WITH_EXTRA) since monolithic file is treated as extra
+        # Note: Individual verification takes priority and detects monolithic file as EXTRA
+        # Exit code 2 means SOME EXTRA files found
         self.assertEqual(result.returncode, 2, f"Priority verification failed: {result.stderr}")
         
         # Should use individual verification (evident by the format of output)
-        # Individual verification shows files without full paths
+        # Individual verification shows files without full paths and detects extra file
         self.assertIn("file1.txt", result.stderr)
         self.assertIn("file2.txt", result.stderr)
+        self.assertIn("EXTRA checksums.sha256", result.stderr)
 
     def test_monolithic_detection_with_custom_filename(self):
         """Test auto-detection works with custom monolithic filenames."""
@@ -138,7 +139,7 @@ class TestVerifyIntegrationAutoDetection(unittest.TestCase):
             sys.executable, str(self.dazzlesum_path)
         ], capture_output=True, text=True, cwd=self.test_path)
         
-        # Note: Expect exit code 0 (SUCCESS) since .tmp files are now excluded from checksums
+        # Note: .tmp files are now excluded from monolithic checksums, so should succeed
         self.assertEqual(result.returncode, 0, f"Custom filename auto-detection failed: {result.stderr}")
         
         # Verification should work for actual files

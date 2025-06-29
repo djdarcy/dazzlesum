@@ -143,10 +143,9 @@ class TestCLIInterface(unittest.TestCase):
         
         # Then verify them
         mono_file = self.test_dir / "checksums.sha256"
-        result = self.run_dazzlesum(["verify", "--checksum-file", str(mono_file), "--show-all", str(self.test_dir)], expect_success=False)
-        # Note: This test now expects exit code 0 since .tmp files are excluded from checksums
-        # This is the correct behavior - temporary files should not be checksummed.
-        self.assertEqual(result.returncode, 0)  # SUCCESS since .tmp files are now excluded
+        result = self.run_dazzlesum(["verify", "--checksum-file", str(mono_file), "--show-all", str(self.test_dir)])
+        # Note: .tmp files are now excluded from monolithic checksums, so verification should succeed
+        self.assertEqual(result.returncode, 0)  # Success - no missing .tmp file
         self.assertIn("OK", result.stderr)  # Files are verified successfully
     
     def test_deprecated_syntax_rejected(self):
