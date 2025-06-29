@@ -45,60 +45,11 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional, Union, Any
 
 # Version information
-def get_version():
-    """Generate dynamic version string with build and git information."""
-    # Base semantic version (manually maintained)
-    MAJOR, MINOR, PATCH = 1, 3, 0
-    
-    # Check for CI/CD injected version
-    ci_version = os.environ.get('DAZZLESUM_VERSION')
-    if ci_version:
-        return ci_version
-    
-    try:
-        # Get git information
-        git_available = subprocess.run(['git', '--version'], 
-                                     capture_output=True).returncode == 0
-        
-        if git_available:
-            # Get commit hash
-            commit_hash = subprocess.check_output(
-                ['git', 'rev-parse', '--short=8', 'HEAD'], 
-                stderr=subprocess.DEVNULL,
-                text=True
-            ).strip()
-            
-            # Get commit date
-            commit_date = subprocess.check_output(
-                ['git', 'show', '-s', '--format=%cd', '--date=format:%Y%m%d', 'HEAD'],
-                stderr=subprocess.DEVNULL,
-                text=True
-            ).strip()
-            
-            # Get build number (count of commits)
-            build_number = subprocess.check_output(
-                ['git', 'rev-list', '--count', 'HEAD'],
-                stderr=subprocess.DEVNULL,
-                text=True
-            ).strip()
-            
-            # Check if in CI environment
-            is_ci = os.environ.get('CI') or os.environ.get('GITHUB_ACTIONS')
-            
-            # Format: MAJOR.MINOR.PATCH_(Build#)-YYYYMMDD-CommitHash
-            if is_ci:
-                return f"{MAJOR}.{MINOR}.{PATCH}_{build_number}-{commit_date}-{commit_hash}"
-            else:
-                # Development build
-                return f"{MAJOR}.{MINOR}.{PATCH}_{build_number}-{commit_date}-{commit_hash}-dev"
-                
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        pass
-    
-    # Fallback for non-git environments
-    return f"{MAJOR}.{MINOR}.{PATCH}"
+# Base semantic version (manually maintained for git hooks)
+MAJOR, MINOR, PATCH = 1, 3, 0
 
-__version__ = get_version()
+# Static version string (updated automatically by git hooks)
+__version__ = "1.3.0_34-20250629-4e4fd00a"
 __author__ = "Dustin Darcy"
 
 # Try to import unctools for enhanced path handling
