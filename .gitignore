@@ -177,3 +177,4 @@ test-runs/
 private/docs/
 private/temp/
 dazzlesum_backup_*/
+.shasum

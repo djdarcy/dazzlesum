@@ -6,9 +6,30 @@ import os
 
 def get_version():
     with open('dazzlesum.py', 'r') as f:
-        for line in f:
-            if line.startswith('__version__'):
-                return line.split('=')[1].strip().strip('"\'')
+        content = f.read()
+        
+        # Extract MAJOR, MINOR, PATCH for PEP 440 compliant version
+        for line in content.splitlines():
+            if line.strip().startswith('MAJOR, MINOR, PATCH ='):
+                # Extract the numbers from "MAJOR, MINOR, PATCH = 1, 3, 2"
+                parts = line.split('=')[1].strip().split(',')
+                try:
+                    major = int(parts[0].strip())
+                    minor = int(parts[1].strip())
+                    patch = int(parts[2].strip())
+                    return f"{major}.{minor}.{patch}"
+                except (ValueError, IndexError):
+                    break
+        
+        # Fallback: extract base version from __version__ if MAJOR,MINOR,PATCH not found
+        for line in content.splitlines():
+            if line.strip().startswith('__version__'):
+                version = line.split('=')[1].strip().strip('"\'')
+                # Extract base version if it contains build info
+                if '_' in version:
+                    return version.split('_')[0]
+                return version
+                
     return '1.1.0'
 
 # Read long description from README

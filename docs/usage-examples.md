@@ -1,40 +1,40 @@
 # Usage Examples
 
-This document provides practical examples for common dazzlesum use cases.
+This document provides practical examples for common dazzlesum use cases (v1.3.0+).
 
 ## Basic Workflow
 
 ### 1. Generate Checksums
 ```bash
 # Start with current directory
-dazzlesum
+dazzlesum create
 
 # Process entire project recursively
-dazzlesum -r
+dazzlesum create -r
 
 # Use SHA512 for extra security
-dazzlesum -r --algorithm sha512
+dazzlesum create -r --algorithm sha512
 ```
 
 ### 2. Verify Integrity
 ```bash
 # Verify all checksums
-dazzlesum -r --verify
+dazzlesum verify -r
 
 # Verbose verification to see what's happening
-dazzlesum -r --verify -v
+dazzlesum verify -r -v
 
 # Show all files, not just problems
-dazzlesum -r --verify --show-all-verifications
+dazzlesum verify -r --show-all-verifications
 ```
 
 ### 3. Update Changed Files
 ```bash
 # Update only changed files
-dazzlesum -r --update
+dazzlesum update -r
 
 # Update with verbose output
-dazzlesum -r --update -vv
+dazzlesum update -r -vv
 ```
 
 ## Integration Examples
@@ -44,13 +44,13 @@ dazzlesum -r --update -vv
 Before creating a backup:
 ```bash
 # Generate checksums for source data
-dazzlesum -r /important/data --mode monolithic --output backup-checksums.sha256
+dazzlesum create -r /important/data --mode monolithic --output backup-checksums.sha256
 ```
 
 After restoring from backup:
 ```bash
 # Verify restored data matches original
-dazzlesum -r /restored/data --verify --output backup-checksums.sha256
+dazzlesum verify -r /restored/data --output backup-checksums.sha256
 ```
 
 ### CI/CD Pipeline
@@ -58,13 +58,13 @@ dazzlesum -r /restored/data --verify --output backup-checksums.sha256
 Generate checksums for build artifacts:
 ```bash
 # Generate checksums for release artifacts
-dazzlesum -r ./dist --mode monolithic --output release-checksums.sha256
+dazzlesum create -r ./dist --mode monolithic --output release-checksums.sha256
 ```
 
 Verify deployment:
 ```bash
 # Verify deployed files match build
-dazzlesum -r ./deployed --verify --output release-checksums.sha256
+dazzlesum verify -r ./deployed --output release-checksums.sha256
 ```
 
 ### Data Migration
@@ -72,14 +72,29 @@ dazzlesum -r ./deployed --verify --output release-checksums.sha256
 On source system:
 ```bash
 # Create backup of checksums
-dazzlesum -r /data --manage backup --backup-dir /checksums
+dazzlesum manage -r /data backup --backup-dir /checksums
 ```
 
 On target system:
 ```bash
 # Restore checksums and verify
-dazzlesum -r /migrated-data --manage restore --backup-dir /checksums
-dazzlesum -r /migrated-data --verify -v
+dazzlesum manage -r /migrated-data restore --backup-dir /checksums
+dazzlesum verify -r /migrated-data -v
+```
+
+### Shadow Directory Workflows
+
+Keep source directories clean during verification:
+
+```bash
+# Generate checksums without cluttering source directory
+dazzlesum create -r /important/data --shadow-dir ./verification-data
+
+# Verify using shadow directory
+dazzlesum verify -r /important/data --shadow-dir ./verification-data
+
+# Both individual and monolithic in shadow directory
+dazzlesum create -r /project --mode both --shadow-dir ./checksums
 ```
 
 ## File Organization
@@ -102,6 +117,21 @@ dazzlesum -r /project --exclude "*.tmp,*.log,node_modules/**,__pycache__/**"
 dazzlesum -r /project --verify --exclude "*.tmp,*.log,node_modules/**,__pycache__/**"
 ```
 
+### Version Control Integration with Shadow Directories
+```bash
+# Keep Git repository clean by using shadow directories
+dazzlesum -r ./src --shadow-dir ./.checksums
+
+# Add shadow directory to .gitignore
+echo ".checksums/" >> .gitignore
+
+# Verify code integrity during CI/CD
+dazzlesum -r ./src --verify --shadow-dir ./.checksums -v
+
+# Generate release checksums in shadow directory
+dazzlesum -r ./dist --mode monolithic --shadow-dir ./release-verification
+```
+
 ## Performance Optimization
 
 ### Large Directory Trees
@@ -120,6 +150,9 @@ dazzlesum -r "//server/share" --algorithm sha256
 
 # Backup checksums before network operations
 dazzlesum -r "//server/share" --manage backup --backup-dir ./network-checksums
+
+# Use shadow directories for network shares to avoid network I/O for checksums
+dazzlesum -r "//server/share" --shadow-dir ./local-checksums
 ```
 
 ## Troubleshooting
@@ -151,6 +184,9 @@ dazzlesum.py -r C:\MyData
 
 REM Verify with UNC paths
 dazzlesum.py -r \\server\share --verify
+
+REM Use shadow directories on Windows
+dazzlesum.py -r C:\ImportantData --shadow-dir C:\Checksums
 ```
 
 ### PowerShell
@@ -160,6 +196,9 @@ python dazzlesum.py -r C:\Projects --mode both
 
 # Backup to different drive
 python dazzlesum.py -r C:\Data --manage backup --backup-dir D:\Checksums
+
+# Shadow directories with PowerShell
+python dazzlesum.py -r C:\ProjectData --shadow-dir D:\ProjectChecksums --mode both
 ```
 
 ### Unix/Linux
@@ -206,4 +245,47 @@ echo Verifying backup...
 python dazzlesum.py -r D:\Backup\Data --verify --output checksums.sha256
 
 echo Backup and verification complete.
+```
+
+### Shadow Directory Automation
+
+```bash
+#!/bin/bash
+# clean-verification.sh - Keep source directories clean while verifying integrity
+
+SOURCE_DIR="${1:-./data}"
+SHADOW_DIR="${2:-./.checksums}"
+
+echo "Generating checksums for $SOURCE_DIR using shadow directory $SHADOW_DIR..."
+dazzlesum -r "$SOURCE_DIR" --mode both --shadow-dir "$SHADOW_DIR"
+
+echo "Verifying integrity using shadow directory..."
+if dazzlesum -r "$SOURCE_DIR" --verify --shadow-dir "$SHADOW_DIR" --quiet; then
+    echo "✓ All files verified successfully (source directory remains clean)"
+else
+    echo "✗ Verification failed - check shadow directory: $SHADOW_DIR"
+    exit 1
+fi
+```
+
+### Git Pre-commit Hook with Shadow Directories
+
+```bash
+#!/bin/bash
+# .git/hooks/pre-commit - Verify integrity before commits
+
+SHADOW_DIR="./.checksums"
+
+# Generate checksums for staged files using shadow directory
+echo "Verifying staged files integrity..."
+dazzlesum -r . --shadow-dir "$SHADOW_DIR" --exclude ".git/**,.checksums/**"
+
+# Verify integrity
+if dazzlesum -r . --verify --shadow-dir "$SHADOW_DIR" --exclude ".git/**,.checksums/**" --quiet; then
+    echo "✓ File integrity verified"
+    exit 0
+else
+    echo "✗ File integrity check failed"
+    exit 1
+fi
 ```
