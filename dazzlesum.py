@@ -49,7 +49,7 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 MAJOR, MINOR, PATCH = 1, 3, 3
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.3_44-20250627-7372c71f"
+__version__ = "1.3.3_45-20250629-e7fd13ae"
 
 def get_package_version():
     """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
@@ -447,12 +447,12 @@ class VerbosityConfig:
         # Note: True means squelched (hidden), False means shown
         VERBOSITY_SQUELCH_MAP = {
             -6: {'show_output': False},  # Special case: no output at all, only exit codes
-            -5: {'INFO': True,  'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': True},   # Only grand total summary
-            -4: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': False, 'FORCE_SUMMARY': True},  # info/status line + grand total
-            -3: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': False, 'SUMMARY': False},  # FAIL + info/status + grand total
-            -2: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # MISSING + FAIL + info/status + grand total
-            -1: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},  # EXTRA + MISSING + FAIL + info/status + grand total
-             0: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Current default
+            -5: {'INFO': True, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': True, 'MISSING': True, 'FAILS': True, 'SUMMARY': True},   # Only grand total summary
+            -4: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': True, 'MISSING': True, 'FAILS': True, 'SUMMARY': False, 'FORCE_SUMMARY': True},  # info/status line + grand total
+            -3: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': True, 'MISSING': True, 'FAILS': False, 'SUMMARY': False},  # FAIL + info/status + grand total
+            -2: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': True, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # MISSING + FAIL + info/status + grand total
+            -1: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': True, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},  # EXTRA + MISSING + FAIL + info/status + grand total
+            0: {'INFO': False, 'SUCCESS': True, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Current default
             +1: {'INFO': False, 'SUCCESS': False, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # Show everything
             # +2 and above: controlled by logger verbosity, not squelch
         }
@@ -485,12 +485,12 @@ def initialize_squelch_from_verbosity(verbosity_level):
         # Note: True means squelched (hidden), False means shown
         VERBOSITY_SQUELCH_MAP = {
             -6: {'show_output': False},
-            -5: {'INFO': True,  'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': True},
-            -4: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': False, 'FORCE_SUMMARY': True},
-            -3: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': False, 'SUMMARY': False},
-            -2: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': False, 'FAILS': False, 'SUMMARY': False},
-            -1: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},
-             0: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},
+            -5: {'INFO': True,  'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': True},  # noqa: E241
+            -4: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': True,  'SUMMARY': False, 'FORCE_SUMMARY': True},  # noqa: E241
+            -3: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': True,  'FAILS': False, 'SUMMARY': False},  # noqa: E241
+            -2: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': True,  'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # noqa: E241
+            -1: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': True,  'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False, 'EXTRA_SUMMARY': True},  # noqa: E241
+             0: {'INFO': False, 'SUCCESS': True,  'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},  # noqa: E241,E131
             +1: {'INFO': False, 'SUCCESS': False, 'NO_SHASUM': False, 'EXTRA': False, 'MISSING': False, 'FAILS': False, 'SUMMARY': False},
         }
         squelch_settings = VERBOSITY_SQUELCH_MAP.get(verbosity_level, VERBOSITY_SQUELCH_MAP[0])
@@ -3901,7 +3901,6 @@ def execute_verify_action(args, directory):
             if category in squelch_settings:
                 squelch_settings[category] = True
     
-    
     # Process directory tree in verify mode
     generator.process_directory_tree(directory, recursive=args.recursive, verify_only=True)
     return 0
@@ -4053,8 +4052,8 @@ def auto_detect_checksum_file(directory_path):
             if file_path.is_file():
                 name = file_path.name.lower()
                 # Check files with common checksum extensions
-                if (name.endswith(('.sha256', '.sha1', '.sha512', '.md5')) or 
-                    'checksum' in name or 'hash' in name):
+                if (name.endswith(('.sha256', '.sha1', '.sha512', '.md5')) or
+                        'checksum' in name or 'hash' in name):
                     if is_monolithic_file(file_path):
                         return file_path
                         
@@ -4311,7 +4310,7 @@ def main():
             if hasattr(locals().get('args'), 'verbose') and args.verbose >= 3:
                 import traceback
                 logger.debug(traceback.format_exc())
-        except:
+        except Exception:
             # Fallback for debugging
             import traceback
             logger.debug(traceback.format_exc())
