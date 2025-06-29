@@ -140,7 +140,12 @@ class DazzleLogger:
                 # Only colorize level 0 info messages (important info)
                 if '\033[' not in msg:
                     msg = color_formatter.info(msg)
-            logger.info(msg)
+            
+            # In quiet mode, use print for level 0 messages since logger.info() is suppressed
+            if self.quiet and level == 0:
+                print(msg, file=sys.stderr)
+            else:
+                logger.info(msg)
 
     def debug(self, msg):
         """Debug messages (verbosity level 3)."""
@@ -292,6 +297,7 @@ class ColorFormatter:
         'light_yellow': '\033[93m',
         'white': '\033[97m',
         'light_gray': '\033[90m',
+        'purple': '\033[38;2;186;128;187m',  # Custom purple #ba80bb (brighter)
         'bold': '\033[1m',
         'reset': '\033[0m'
     }
@@ -355,6 +361,10 @@ class ColorFormatter:
     def info_secondary(self, text):
         """Format secondary info text (light blue/cyan) for informational messages."""
         return self.colorize(text, 'light_blue')
+    
+    def grand_totals(self, text, bold=False):
+        """Format grand totals text (purple) to distinguish from success states."""
+        return self.colorize(text, 'purple', bold)
 
 
 # Global color formatter instance - will be set up in main()
@@ -362,6 +372,210 @@ color_formatter = None
 
 # Global exit code for verification operations - will be set by verification results
 verification_exit_code = 0
+
+
+class GrandTotals:
+    """Aggregate statistics across multiple directory verifications."""
+    
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        """Reset all counters for a new verification run."""
+        # Directory categorization
+        self.directories_processed = 0
+        self.directories_success = 0      # 100% success
+        self.directories_no_shasum = 0    # No .shasum file found
+        self.directories_partial = 0     # Mixed results but no failures
+        self.directories_failed = 0      # Has failures or missing files
+        
+        # File statistics
+        self.files_verified = 0
+        self.files_failed = 0
+        self.files_missing = 0
+        self.files_extra = 0
+        
+        # Performance tracking
+        self.start_time = None
+        self.end_time = None
+    
+    def start_timing(self):
+        """Start timing the verification process."""
+        import time
+        self.start_time = time.time()
+    
+    def end_timing(self):
+        """End timing the verification process."""
+        import time
+        self.end_time = time.time()
+    
+    def add_directory_result(self, results):
+        """Add results from a single directory verification.
+        
+        Args:
+            results: Dictionary with verification results from _print_verification_results
+        """
+        self.directories_processed += 1
+        
+        if 'error' in results:
+            # Check if this is a "No .shasum file found" case
+            if "No .shasum file found" in results['error']:
+                self.directories_no_shasum += 1
+            else:
+                self.directories_failed += 1
+        else:
+            # Count files
+            verified = len(results.get('verified', []))
+            failed = len(results.get('failed', []))
+            missing = len(results.get('missing', []))
+            extra = len(results.get('extra', []))
+            
+            self.files_verified += verified
+            self.files_failed += failed
+            self.files_missing += missing
+            self.files_extra += extra
+            
+            # Categorize directory based on results
+            if failed == 0 and missing == 0:
+                if extra == 0:
+                    self.directories_success += 1
+                else:
+                    self.directories_partial += 1  # Has extra files but no failures
+            else:
+                self.directories_failed += 1
+    
+    def get_overall_success_percentage(self):
+        """Calculate overall success percentage across all files."""
+        total_expected = self.files_verified + self.files_failed + self.files_missing
+        if total_expected == 0:
+            return 100 if self.files_extra == 0 else 0
+        
+        return round((self.files_verified / total_expected) * 100)
+    
+    def get_overall_failure_percentage(self):
+        """Calculate overall failure percentage across all files."""
+        return 100 - self.get_overall_success_percentage()
+    
+    def get_processing_time(self):
+        """Get total processing time in seconds."""
+        if self.start_time and self.end_time:
+            return self.end_time - self.start_time
+        return 0
+    
+    def get_throughput(self):
+        """Get files per second throughput."""
+        processing_time = self.get_processing_time()
+        total_files = self.files_verified + self.files_failed + self.files_missing + self.files_extra
+        
+        if processing_time > 0 and total_files > 0:
+            return round(total_files / processing_time)
+        return 0
+    
+    def display_grand_totals(self):
+        """Display the grand totals summary."""
+        if not dazzle_logger:
+            return
+        
+        # Calculate overall statistics
+        success_pct = self.get_overall_success_percentage()
+        failure_pct = self.get_overall_failure_percentage()
+        processing_time = self.get_processing_time()
+        throughput = self.get_throughput()
+        
+        # Determine overall status using same logic as individual directories
+        status_text, exit_code, _, _ = calculate_verification_status(
+            self.files_verified, self.files_failed, self.files_missing, self.files_extra
+        )
+        
+        # Update global exit code
+        global verification_exit_code
+        verification_exit_code = max(verification_exit_code, exit_code)
+        
+        # Display header
+        dazzle_logger.info("", level=0)  # Blank line
+        if color_formatter:
+            header = color_formatter.grand_totals("=== GRAND TOTALS ===", bold=True)
+        else:
+            header = "=== GRAND TOTALS ==="
+        dazzle_logger.info(header, level=0)
+        
+        # Directory summary with colored status words
+        if color_formatter:
+            processed_text = f"{color_formatter.bold_number(self.directories_processed)} processed"
+        else:
+            processed_text = f"{self.directories_processed} processed"
+        
+        dir_summary = f"Directories: {processed_text}"
+        
+        if self.directories_processed > 0:
+            parts = []
+            if self.directories_success > 0:
+                if color_formatter:
+                    parts.append(f"{color_formatter.bold_number(self.directories_success)} {color_formatter.success('success')}")
+                else:
+                    parts.append(f"{self.directories_success} success")
+            if self.directories_no_shasum > 0:
+                if color_formatter:
+                    parts.append(f"{color_formatter.bold_number(self.directories_no_shasum)} {color_formatter.info_secondary('no-shasum')}")
+                else:
+                    parts.append(f"{self.directories_no_shasum} no-shasum")
+            if self.directories_partial > 0:
+                if color_formatter:
+                    parts.append(f"{color_formatter.bold_number(self.directories_partial)} {color_formatter.extra('partial')}")
+                else:
+                    parts.append(f"{self.directories_partial} partial")
+            if self.directories_failed > 0:
+                if color_formatter:
+                    parts.append(f"{color_formatter.bold_number(self.directories_failed)} {color_formatter.error('failed')}")
+                else:
+                    parts.append(f"{self.directories_failed} failed")
+            
+            if parts:
+                dir_summary += f" ({', '.join(parts)})"
+        
+        dazzle_logger.info(dir_summary, level=0)
+        
+        # File summary with colored status
+        total_files = self.files_verified + self.files_failed + self.files_missing + self.files_extra
+        if total_files > 0:
+            colored_status = format_status_with_colors(status_text, success_pct, failure_pct)
+            
+            if color_formatter:
+                verified_text = f"{color_formatter.bold_number(self.files_verified)} {color_formatter.success('verified')}"
+                failed_text = f"{color_formatter.bold_number(self.files_failed)} {color_formatter.error('failed')}"
+                missing_text = f"{color_formatter.bold_number(self.files_missing)} {color_formatter.warning('missing')}"
+                extra_text = f"{color_formatter.bold_number(self.files_extra)} {color_formatter.extra('extra')}"
+            else:
+                verified_text = f"{self.files_verified} verified"
+                failed_text = f"{self.files_failed} failed"
+                missing_text = f"{self.files_missing} missing"
+                extra_text = f"{self.files_extra} extra"
+            
+            file_summary = f"Files: {verified_text}, {failed_text}, {missing_text}, {extra_text} ({colored_status})"
+            dazzle_logger.info(file_summary, level=0)
+        
+        # Processing time and throughput
+        if processing_time > 0:
+            time_summary = f"Processing: {processing_time:.2f} seconds"
+            if throughput > 0:
+                time_summary += f" ({throughput} files/sec)"
+            if color_formatter:
+                colored_time_summary = color_formatter.grand_totals(time_summary)
+            else:
+                colored_time_summary = time_summary
+            dazzle_logger.info(colored_time_summary, level=0)
+
+
+# Global grand totals instance for recursive operations
+grand_totals = None
+
+# Global squelch settings for output filtering
+squelch_settings = {
+    'SUCCESS': False,      # Hide successful directories by default  
+    'NO_SHASUM': False,    # Show "No .shasum file found" by default
+    'INFO': False,         # Show info messages by default
+    'show_all': False      # Legacy behavior flag
+}
 
 
 class ShasumManager:
@@ -2011,6 +2225,8 @@ class ChecksumGenerator:
     def process_directory_tree(self, root_directory: Path, recursive=True,
                              verify_only=False, update_mode=False):
         """Process an entire directory tree."""
+        global grand_totals
+        
         if not root_directory.exists():
             logger.error(f"Directory does not exist: {root_directory}")
             return
@@ -2138,6 +2354,11 @@ class ChecksumGenerator:
             if self.progress_tracker:
                 self.progress_tracker.update_dirs(1)
 
+        # Initialize grand totals for recursive verification
+        if verify_only and recursive:
+            grand_totals = GrandTotals()
+            grand_totals.start_timing()
+
         if not self.summary_mode:
             logger.info(f"Starting {'recursive ' if recursive else ''}processing of {root_directory}")
 
@@ -2164,32 +2385,48 @@ class ChecksumGenerator:
         if not self.summary_mode:
             logger.info(f"Completed processing {walker.processed_count} directories in {elapsed_time:.2f}s")
 
+        # Display grand totals for recursive verification
+        if verify_only and recursive and grand_totals:
+            grand_totals.end_timing()
+            grand_totals.display_grand_totals()
+
         # Print summary if in summary mode
         if self.summary_mode:
             self.summary_collector.print_summary()
 
     def _print_verification_results(self, path: Path, results: Dict[str, Any], show_all=False):
         """Print verification results for a directory or monolithic file."""
+        global squelch_settings
+        
         if 'error' in results:
             # Check if this is a "No .shasum file found" informational message
             error_msg = results['error']
             if "No .shasum file found" in error_msg:
-                # Use info_secondary color for missing .shasum files (not a failure, just informational)
-                if color_formatter:
-                    colored_msg = color_formatter.info_secondary(f"{path}: {error_msg}")
+                # Check squelch settings for NO_SHASUM messages
+                if squelch_settings and squelch_settings.get('NO_SHASUM', False):
+                    # Skip displaying this message due to squelch
+                    pass
                 else:
-                    colored_msg = f"{path}: {error_msg}"
-                
-                if dazzle_logger:
-                    dazzle_logger.info(colored_msg, level=0)
-                else:
-                    logger.info(colored_msg)
+                    # Use info_secondary color for missing .shasum files (not a failure, just informational)
+                    if color_formatter:
+                        colored_msg = color_formatter.info_secondary(f"{path}: {error_msg}")
+                    else:
+                        colored_msg = f"{path}: {error_msg}"
+                    
+                    if dazzle_logger:
+                        dazzle_logger.info(colored_msg, level=0)
+                    else:
+                        logger.info(colored_msg)
             else:
                 # Regular error - use error formatting
                 if dazzle_logger:
                     dazzle_logger.error(f"{path}: {error_msg}")
                 else:
                     logger.error(f"{path}: {error_msg}")
+            
+            # Add error results to grand totals if tracking
+            if grand_totals:
+                grand_totals.add_directory_result(results)
             return
 
         verified_count = len(results['verified'])
@@ -2247,10 +2484,17 @@ class ChecksumGenerator:
         if extra_count > 0:
             for filename in results['extra']:
                 # Always show extra files (problems)
-                if color_formatter:
-                    extra_text = f" {color_formatter.extra('EXTRA')} {color_formatter.filename(filename)}"
+                # In quiet mode, show directory context for EXTRA files
+                if dazzle_logger and dazzle_logger.quiet:
+                    if color_formatter:
+                        extra_text = f" {color_formatter.extra('EXTRA')} {color_formatter.filename(filename)} | {path}"
+                    else:
+                        extra_text = f" EXTRA {filename} | {path}"
                 else:
-                    extra_text = f" EXTRA {filename}"
+                    if color_formatter:
+                        extra_text = f" {color_formatter.extra('EXTRA')} {color_formatter.filename(filename)}"
+                    else:
+                        extra_text = f" EXTRA {filename}"
                 logger.warning(extra_text)
 
         # Calculate intelligent status with percentages
@@ -2276,22 +2520,54 @@ class ChecksumGenerator:
         # Build complete summary line
         summary = f"{colored_status} {path}: {verified_text}, {failed_text}, {missing_text}, {extra_text}"
         
+        # Check squelch settings before displaying
+        should_display = True
+        
+        if squelch_settings:
+            # Check if this is a SUCCESS message that should be squelched
+            if exit_code == 0 and squelch_settings.get('SUCCESS', False):
+                # This is a perfect success and SUCCESS is squelched
+                should_display = False
+            
+            # Always show problems regardless of squelch settings
+            if exit_code > 2:  # Has real issues (failures, missing files)
+                should_display = True
+        
         # Log with appropriate level based on severity
-        if exit_code <= 2:  # Perfect or almost perfect
-            if dazzle_logger:
-                dazzle_logger.info(summary, level=0)
-            else:
-                logger.info(summary)
-        else:  # Has issues
-            if dazzle_logger:
-                dazzle_logger.error(summary)
-            else:
-                logger.error(summary)
+        if should_display:
+            if exit_code <= 2:  # Perfect or almost perfect
+                if dazzle_logger:
+                    dazzle_logger.info(summary, level=0)
+                else:
+                    logger.info(summary)
+            else:  # Has issues
+                if dazzle_logger:
+                    dazzle_logger.error(summary)
+                else:
+                    logger.error(summary)
         
         # Store exit code for main function to return
         # We'll add this to a global variable or pass it through the call stack
         global verification_exit_code
         verification_exit_code = exit_code
+        
+        # Add results to grand totals if tracking
+        if grand_totals:
+            grand_totals.add_directory_result(results)
+        
+        # In quiet mode, add spacing after directories that produce output
+        if dazzle_logger and dazzle_logger.quiet:
+            # Check if this directory produced any output in quiet mode
+            has_problems = failed_count > 0 or missing_count > 0 or extra_count > 0
+            showed_summary = should_display and (exit_code > 2 or exit_code == 0 and not squelch_settings.get('SUCCESS', False))
+            
+            if has_problems or showed_summary:
+                # This directory produced output, add spacing after it
+                print(file=sys.stderr)
+        
+        # Mark that we just processed a directory for spacing
+        if dazzle_logger:
+            dazzle_logger.last_was_directory = True
 
 
 class DetailedHelpAction(argparse.Action):
@@ -2780,6 +3056,12 @@ For comprehensive examples: %(prog)s examples
                               help=argparse.SUPPRESS)  # Hidden deprecated option
     verify_parser.add_argument('--log', metavar='FILE',
                               help='Write detailed log to file')
+    
+    # Output control options
+    verify_parser.add_argument('--squelch', metavar='CATEGORIES',
+                              help='Hide output categories: SUCCESS,NO_SHASUM,INFO (comma-separated)')
+    verify_parser.add_argument('--show-all', action='store_true',
+                              help='Show all results including successful verifications (legacy behavior)')
     
     # UPDATE subcommand
     update_parser = subparsers.add_parser('update', parents=[parent],
@@ -3283,6 +3565,38 @@ def execute_verify_action(args, directory):
     if args.force_python:
         generator.calculator.native_tool = None
         logger.info("Forcing Python implementation")
+    
+    # Configure squelch settings based on arguments (only for recursive verification)
+    global squelch_settings
+    if args.recursive:
+        squelch_settings = {
+            'SUCCESS': True,       # Hide SUCCESS by default (new behavior)
+            'NO_SHASUM': False,    # Show "No .shasum file found" by default
+            'INFO': False,         # Show info messages by default
+            'show_all': False      # Legacy behavior flag
+        }
+        
+        # Handle --show-all flag (legacy behavior)
+        if getattr(args, 'show_all', False):
+            squelch_settings['show_all'] = True
+            squelch_settings['SUCCESS'] = False  # Show SUCCESS when --show-all is used
+        
+        # Handle --squelch parameter
+        if hasattr(args, 'squelch') and args.squelch:
+            squelch_categories = [cat.strip().upper() for cat in args.squelch.split(',')]
+            for category in squelch_categories:
+                if category in squelch_settings:
+                    squelch_settings[category] = True
+        
+        # Handle --quiet flag (hide everything except failures)
+        if getattr(args, 'quiet', False):
+            squelch_settings['SUCCESS'] = True
+            squelch_settings['NO_SHASUM'] = True
+            squelch_settings['INFO'] = True
+    else:
+        # For single directory verification, don't use squelch (legacy behavior)
+        squelch_settings = None
+    
     
     # Process directory tree in verify mode
     generator.process_directory_tree(directory, recursive=args.recursive, verify_only=True)
