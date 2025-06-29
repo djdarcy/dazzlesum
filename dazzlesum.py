@@ -49,7 +49,7 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 MAJOR, MINOR, PATCH = 1, 3, 4
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.4_53-20250629-af78ce97"
+__version__ = "1.3.4_54-20250629-4fe10b95"
 
 def get_package_version():
     """Return PEP 440 compliant version for packaging (uses MAJOR.MINOR.PATCH)."""
@@ -619,11 +619,9 @@ class GrandTotals:
         
         # Update global exit code
         global verification_exit_code
-        old_exit_code = verification_exit_code
-        verification_exit_code = max(verification_exit_code, exit_code)
-        
-        # DEBUG: Print final exit code calculation
-        print(f"DEBUG_FINAL: grand_totals_exit_code={exit_code}, old_global={old_exit_code}, new_global={verification_exit_code}, verified={self.files_verified}, failed={self.files_failed}, missing={self.files_missing}, extra={self.files_extra}")
+        # For recursive operations, the grand totals exit code should override individual directory codes
+        # This ensures the exit code reflects overall repository health, not worst individual directory
+        verification_exit_code = exit_code
         
         # Display header
         dazzle_logger.info("", level=0)  # Blank line
@@ -2831,16 +2829,10 @@ class ChecksumGenerator:
         # Store exit code for main function to return
         # We'll add this to a global variable or pass it through the call stack
         global verification_exit_code
-        verification_exit_code = exit_code
-        
-        # DEBUG: Print exit code details for CI debugging  
-        if "tmp" in str(Path.cwd()):  # Running in test environment
-            print(f"DEBUG_INDIVIDUAL: dir={directory}, verified={results.files_verified}, failed={results.files_failed}, missing={results.files_missing}, extra={results.files_extra}, exit_code={exit_code}")
-        
-        # DEBUG: Print grand totals calculation details
-        if grand_totals and hasattr(grand_totals, 'files_verified'):
-            if "tmp" in str(Path.cwd()):  # Running in test environment  
-                print(f"DEBUG_GRANDTOTALS: verified={grand_totals.files_verified}, failed={grand_totals.files_failed}, missing={grand_totals.files_missing}, extra={grand_totals.files_extra}")
+        # Only set individual directory exit code if we're not tracking grand totals
+        # If we have grand totals, they will set the final exit code
+        if not grand_totals:
+            verification_exit_code = exit_code
         
         # Add results to grand totals if tracking
         if grand_totals:
