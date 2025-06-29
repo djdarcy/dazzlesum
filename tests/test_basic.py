@@ -40,9 +40,18 @@ class TestBasicFunctionality(unittest.TestCase):
         version = dazzlesum.__version__
         self.assertIsInstance(version, str)
         self.assertTrue(len(version) > 0)
-        # Should be in format like "1.1.0"
-        parts = version.split('.')
-        self.assertGreaterEqual(len(parts), 2)
+        # Should be in format like "1.3.0" or "1.3.0_33-20250629-9938568e-dev"
+        if '_' in version:
+            # Development or CI build format
+            base_version, build_info = version.split('_', 1)
+            parts = base_version.split('.')
+            self.assertGreaterEqual(len(parts), 3)
+            # Check build info format: Build#-YYYYMMDD-CommitHash[-dev]
+            self.assertRegex(build_info, r'^\d+-\d{8}-[a-f0-9]{8}')
+        else:
+            # Basic version format
+            parts = version.split('.')
+            self.assertGreaterEqual(len(parts), 2)
 
     def test_supported_algorithms(self):
         """Test that supported algorithms are defined."""

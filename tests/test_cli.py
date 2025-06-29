@@ -56,6 +56,7 @@ class TestCLIInterface(unittest.TestCase):
     def test_version_command(self):
         """Test version command."""
         result = self.run_dazzlesum(["--version"])
+        # Should contain base version 1.3.0, possibly with build info
         self.assertIn("1.3.0", result.stdout)
     
     def test_create_subcommand_help(self):

@@ -239,10 +239,10 @@ class TestSquelchAndGrandTotals(unittest.TestCase):
         self.assertIn("=== GRAND TOTALS ===", result.stderr)
 
     def test_quiet_mode(self):
-        """Test --quiet mode shows only failures and basic summary."""
+        """Test -q mode shows only failures and basic summary."""
         self.create_test_checksums()
         
-        result = self.run_dazzlesum(["verify", "-r", "--quiet", str(self.test_path)], expect_success=False)
+        result = self.run_dazzlesum(["verify", "-r", "-q", str(self.test_path)], expect_success=False)
         
         # Should show problems
         self.assertIn("FAIL", result.stderr)
@@ -344,7 +344,7 @@ class TestSquelchAndGrandTotals(unittest.TestCase):
         # Should document squelch options
         self.assertIn("--squelch", result.stdout)
         self.assertIn("--show-all", result.stdout)
-        self.assertIn("--quiet", result.stdout)
+        self.assertIn("-q, --quiet", result.stdout)
         
         # Should explain categories
         self.assertIn("SUCCESS", result.stdout)

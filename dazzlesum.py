@@ -45,7 +45,60 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional, Union, Any
 
 # Version information
-__version__ = "1.3.0"
+def get_version():
+    """Generate dynamic version string with build and git information."""
+    # Base semantic version (manually maintained)
+    MAJOR, MINOR, PATCH = 1, 3, 0
+    
+    # Check for CI/CD injected version
+    ci_version = os.environ.get('DAZZLESUM_VERSION')
+    if ci_version:
+        return ci_version
+    
+    try:
+        # Get git information
+        git_available = subprocess.run(['git', '--version'], 
+                                     capture_output=True).returncode == 0
+        
+        if git_available:
+            # Get commit hash
+            commit_hash = subprocess.check_output(
+                ['git', 'rev-parse', '--short=8', 'HEAD'], 
+                stderr=subprocess.DEVNULL,
+                text=True
+            ).strip()
+            
+            # Get commit date
+            commit_date = subprocess.check_output(
+                ['git', 'show', '-s', '--format=%cd', '--date=format:%Y%m%d', 'HEAD'],
+                stderr=subprocess.DEVNULL,
+                text=True
+            ).strip()
+            
+            # Get build number (count of commits)
+            build_number = subprocess.check_output(
+                ['git', 'rev-list', '--count', 'HEAD'],
+                stderr=subprocess.DEVNULL,
+                text=True
+            ).strip()
+            
+            # Check if in CI environment
+            is_ci = os.environ.get('CI') or os.environ.get('GITHUB_ACTIONS')
+            
+            # Format: MAJOR.MINOR.PATCH_(Build#)-YYYYMMDD-CommitHash
+            if is_ci:
+                return f"{MAJOR}.{MINOR}.{PATCH}_{build_number}-{commit_date}-{commit_hash}"
+            else:
+                # Development build
+                return f"{MAJOR}.{MINOR}.{PATCH}_{build_number}-{commit_date}-{commit_hash}-dev"
+                
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+    
+    # Fallback for non-git environments
+    return f"{MAJOR}.{MINOR}.{PATCH}"
+
+__version__ = get_version()
 __author__ = "Dustin Darcy"
 
 # Try to import unctools for enhanced path handling
@@ -3297,20 +3350,32 @@ Examples:
   %(prog)s create -r --mode monolithic                  # Single checksum file for tree
   %(prog)s create -r --mode monolithic --output backup.sha256  # Custom monolithic name
   %(prog)s verify -r                                    # Verify existing checksums
-  %(prog)s verify -r --show-all-verifications           # Show all verification results
+  %(prog)s verify -r -v                                 # Show all verification results including SUCCESS
+  %(prog)s verify -r -qq                                # Only show MISSING/FAIL + summaries
+  %(prog)s verify -r -qqqq                              # Ultra quiet - only directories with problems
   %(prog)s update -r                                    # Update changed checksums
   %(prog)s manage -r backup --backup-dir ./backup       # Backup all .shasum files
   %(prog)s manage -r list                               # List all .shasum files
   
+Verbosity Control (11 levels: -6 to +4):
+  %(prog)s verify -r -qqqqq                             # Silent mode - exit codes only (CI/CD)
+  %(prog)s verify -r -qqqq                              # Ultra quiet - only problem directories
+  %(prog)s verify -r -qq                                # Quiet - hide EXTRA files, show problems
+  %(prog)s verify -r                                    # Default - smart problem reporting
+  %(prog)s verify -r -v                                 # Verbose - show all results including SUCCESS
+  %(prog)s verify -r -vv                                # Show file-by-file processing details
+  %(prog)s verify -r --verbosity=-3                     # Direct level setting (same as -qqq)
+  
 Clone Verification Workflow:
   %(prog)s create -r --mode monolithic /original/folder       # Generate checksums for original
   cp -r /original/folder /clone/folder                         # Create clone
-  %(prog)s verify --output checksums.sha256 /clone/folder     # Verify clone matches original
+  %(prog)s verify --checksum-file checksums.sha256 /clone/folder  # Verify clone matches original
   
 Shadow Directory (keeps source clean):
   %(prog)s create -r --shadow-dir ./checksums /data           # Generate in shadow
   %(prog)s verify -r --shadow-dir ./checksums /data           # Verify from shadow
 
+For detailed verbosity help: %(prog)s verbosity
 For detailed help on any command: %(prog)s <command> --help
 For comprehensive examples: %(prog)s examples
         """)
@@ -3393,6 +3458,9 @@ For comprehensive examples: %(prog)s examples
     shadow_parser = subparsers.add_parser('shadow', help='Detailed help for shadow directories')
     shadow_parser.set_defaults(help_topic='shadow')
     
+    verbosity_parser = subparsers.add_parser('verbosity', help='Detailed help for verbosity levels (-6 to +4)')
+    verbosity_parser.set_defaults(help_topic='verbosity')
+    
     # Override format_help to show all available options in main help
     original_format_help = parser.format_help
     
@@ -3409,9 +3477,11 @@ Common Options (available for all commands):
   --shadow-dir DIR      Store checksums in parallel shadow directory
   --line-endings {auto,unix,windows,preserve}
                         Line ending handling strategy
-  -v, --verbose         Increase verbosity (-v, -vv, -vvv)
-  --quiet               Suppress non-error output
+  -v, --verbose         Increase verbosity (can be used multiple times: -v, -vv, -vvv, -vvvv)
+  -q, --quiet           Decrease verbosity (can be used multiple times: -q, -qq, -qqq, -qqqq, -qqqqq)
+  --verbosity LEVEL     Set verbosity level directly (-6 to +4, overrides -q/-v)
   --no-color            Disable colored output
+  --show-log-types      Show log type prefixes (INFO, ERROR, WARNING)
   --force-python        Force Python implementation (skip native tools)
   -y, --yes             Answer yes to all prompts
 
@@ -3429,7 +3499,9 @@ Command-Specific Options:
   verify:
     --show-all-verifications
                         Show all verification results, not just failures
-    --output FILE       Monolithic checksum file to verify against
+    --checksum-file FILE    Monolithic checksum file to verify against
+    --squelch CATEGORIES    Hide output categories: SUCCESS,NO_SHASUM,INFO,EXTRA,MISSING,FAILS,SUMMARY,EXTRA_SUMMARY
+    --show-all          Show all results including successful verifications (legacy behavior)
     --log FILE          Write detailed log to file
     
   update:

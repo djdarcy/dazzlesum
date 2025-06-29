@@ -47,7 +47,9 @@ dazzlesum verify [options] [directory]
 
 **Command-specific options:**
 - `--show-all-verifications` - Show all verification results, not just failures
-- `--output FILE` - Monolithic checksum file to verify against
+- `--checksum-file FILE` - Monolithic checksum file to verify against  
+- `--squelch CATEGORIES` - Hide output categories: SUCCESS,NO_SHASUM,INFO,EXTRA,MISSING,FAILS,SUMMARY,EXTRA_SUMMARY
+- `--show-all` - Show all results including successful verifications (legacy behavior)
 - `--log FILE` - Write detailed log to file
 
 **Examples:**
@@ -122,6 +124,14 @@ Shows detailed help for shadow directory functionality.
 dazzlesum shadow
 ```
 
+### `verbosity` - Verbosity Levels Help
+
+Shows detailed help for all 11 verbosity levels (-6 to +4) with examples and explanations.
+
+```bash
+dazzlesum verbosity
+```
+
 ## Global Options
 
 These options are available for all commands:
@@ -130,16 +140,78 @@ These options are available for all commands:
 |--------|-------------|
 | `directory` | Directory to process (default: current directory) |
 | `-r`, `--recursive` | Process directories recursively |
-| `-v`, `--verbose` | Increase verbosity (-v, -vv, -vvv) |
-| `--quiet` | Suppress non-error output |
+| `-v`, `--verbose` | Increase verbosity (can be used multiple times: -v, -vv, -vvv, -vvvv) |
+| `-q`, `--quiet` | Decrease verbosity (can be used multiple times: -q, -qq, -qqq, -qqqq, -qqqqq) |
+| `--verbosity LEVEL` | Set verbosity level directly (-6 to +4, overrides -q/-v) |
 | `--algorithm {md5,sha1,sha256,sha512}` | Hash algorithm (default: sha256) |
 | `--shadow-dir DIR` | Store checksums in parallel shadow directory |
 | `--follow-symlinks` | Follow symbolic links and junctions |
 | `--line-endings {auto,unix,windows,preserve}` | Line ending handling strategy |
+| `--no-color` | Disable colored output |
+| `--show-log-types` | Show log type prefixes (INFO, ERROR, WARNING) |
 | `--force-python` | Force Python implementation (skip native tools) |
 | `-y`, `--yes` | Answer yes to all prompts |
 | `--help` | Show help message and exit |
 | `--version` | Show program version and exit |
+
+## Verbosity Control
+
+Dazzlesum provides 11 verbosity levels (-6 to +4) for precise output control:
+
+### Quick Reference
+
+| Level | Flags | Description |
+|-------|-------|-------------|
+| -6 | `-qqqqqq` | Silent mode - exit codes only (CI/CD) |
+| -5 | `-qqqqq` | Grand totals only |
+| -4 | `-qqqq` | Status lines for FAIL/MISSING directories only |
+| -3 | `-qqq` | Show FAIL + status lines |
+| -2 | `-qq` | Show MISSING + FAIL + status lines |
+| -1 | `-q` | Show EXTRA + MISSING + FAIL (compressed EXTRA output) |
+| 0 | (default) | Smart problem reporting + "No .shasum" messages |
+| +1 | `-v` | Show everything including SUCCESS directories |
+| +2 | `-vv` | Show file-by-file processing details |
+| +3 | `-vvv` | Show debug information |
+| +4 | `-vvvv` | Show all internal operations |
+
+### Examples
+
+```bash
+# Ultra quiet - only directories with problems
+dazzlesum verify -r -qqqq
+
+# Quiet - hide EXTRA files, show other problems  
+dazzlesum verify -r -qq
+
+# Verbose - show all results including SUCCESS
+dazzlesum verify -r -v
+
+# Direct level setting
+dazzlesum verify -r --verbosity=-3
+
+# Arithmetic: -q -v = 0 (default level)
+dazzlesum verify -r -q -v
+
+# Silent mode for CI/CD
+dazzlesum verify -r -qqqqqq
+```
+
+### Environment Variables
+
+- `DAZZLESUM_VERBOSITY=-1` - Set default verbosity level
+- `DAZZLESUM_SHOW_LOG_TYPES=1` - Force log type prefixes to show
+
+### Fine-Grained Control
+
+Use `--squelch` to manually override specific categories:
+
+```bash
+# Hide SUCCESS and EXTRA categories
+dazzlesum verify -r --squelch SUCCESS,EXTRA
+
+# Hide status lines for EXTRA-only directories
+dazzlesum verify -r --squelch EXTRA_SUMMARY
+```
 
 ## File Filtering
 
@@ -183,7 +255,7 @@ dazzlesum create -r --mode monolithic
 dazzlesum create -r --mode monolithic --output my-checksums.sha256
 
 # Verify against monolithic file
-dazzlesum verify --output checksums.sha256 /target/directory
+dazzlesum verify --checksum-file checksums.sha256 /target/directory
 ```
 
 
@@ -197,7 +269,19 @@ dazzlesum verify --output checksums.sha256 /target/directory
 
 ## Environment Variables
 
-None currently supported. All configuration is done via command-line options.
+| Variable | Description |
+|----------|-------------|
+| `DAZZLESUM_VERBOSITY` | Set default verbosity level (-6 to +4) |
+| `DAZZLESUM_SHOW_LOG_TYPES` | Force log type prefixes to show (1, true, yes) |
+
+Examples:
+```bash
+# Set default to quiet mode
+export DAZZLESUM_VERBOSITY=-2
+
+# Always show log type prefixes
+export DAZZLESUM_SHOW_LOG_TYPES=1
+```
 
 ## File Patterns
 
