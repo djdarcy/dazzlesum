@@ -46,10 +46,10 @@ from typing import Dict, List, Set, Tuple, Optional, Union, Any
 
 # Version information
 # Base semantic version (manually maintained for git hooks)
-MAJOR, MINOR, PATCH = 1, 3, 1
+MAJOR, MINOR, PATCH = 1, 3, 2
 
 # Static version string (updated automatically by git hooks)
-__version__ = "1.3.1_40-20250629-0c08a142"
+__version__ = "1.3.2_41-20250629-654f264d"
 __author__ = "Dustin Darcy"
 
 # Try to import unctools for enhanced path handling
